@@ -4,7 +4,7 @@
 
 React State Map analyzes your codebase and generates interactive diagrams showing exactly how state, props, and context flow between components. No runtime dependencies, no code changes required - just pure static analysis.
 
-![React State Map - State Flow View](images/state-flow.png)
+![React State Map - State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
 
 ## Features
 
@@ -19,7 +19,7 @@ See at a glance which components own state and how it propagates through your co
 ### Context Boundary Detection
 Visualize your React Context providers and see exactly which components are inside or outside each context boundary.
 
-![Context Boundaries View](images/context-boundaries.png)
+![Context Boundaries View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/context-boundaries.png)
 
 - Dashed purple boundaries show context scope
 - Nested contexts displayed with offset for clarity
@@ -28,7 +28,7 @@ Visualize your React Context providers and see exactly which components are insi
 ### Prop Drilling Detection
 Automatically detect when props are passed through too many component layers.
 
-![Prop Drilling View](images/prop-drilling.png)
+![Prop Drilling View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/prop-drilling.png)
 
 - Red highlights indicate prop drilling paths
 - Configurable threshold (default: 3 hops)
@@ -37,7 +37,7 @@ Automatically detect when props are passed through too many component layers.
 ### Component Details Panel
 Click any component to see comprehensive details in the sidebar.
 
-![Component Details](images/component-details.png)
+![Component Details](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/component-details.png)
 
 - **State Defined**: All state hooks in the component
 - **Context Consumers**: Which contexts the component uses
