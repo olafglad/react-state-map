@@ -4,6 +4,8 @@
 
 React State Map analyzes your codebase and generates interactive diagrams showing exactly how state, props, and context flow between components. No runtime dependencies, no code changes required - just pure static analysis.
 
+![React State Map Demo](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/demo.gif)
+
 ![React State Map - State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
 
 ## Features
