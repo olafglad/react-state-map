@@ -1,0 +1,35 @@
+{
+  "name": "react-state-map",
+  "version": "0.1.0",
+  "description": "CLI tool to visualize React state flow through static analysis",
+  "type": "module",
+  "bin": {
+    "react-state-map": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@react-state-map/core": "workspace:*",
+    "chokidar": "^3.5.3",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "react",
+    "state",
+    "visualization",
+    "static-analysis",
+    "cli"
+  ]
+}

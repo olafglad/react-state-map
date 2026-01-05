@@ -1,0 +1,109 @@
+{
+  "name": "react-state-map-vscode",
+  "displayName": "React State Map",
+  "description": "Visualize React state flow, context boundaries, and prop drilling through static analysis. Supports useState, useContext, Redux, Zustand, and custom hooks.",
+  "version": "0.1.0",
+  "publisher": "OlafGlad",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olafglad/react-state-map"
+  },
+  "homepage": "https://github.com/olafglad/react-state-map#readme",
+  "bugs": {
+    "url": "https://github.com/olafglad/react-state-map/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "react",
+    "state",
+    "visualization",
+    "static-analysis",
+    "state-management",
+    "redux",
+    "zustand",
+    "context",
+    "props",
+    "component",
+    "diagram",
+    "flow"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.tsx",
+    "workspaceContains:**/*.jsx"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "reactStateMap.openPanel",
+        "title": "React State Map: Open Panel"
+      },
+      {
+        "command": "reactStateMap.refresh",
+        "title": "React State Map: Refresh"
+      }
+    ],
+    "configuration": {
+      "title": "React State Map",
+      "properties": {
+        "reactStateMap.drillingThreshold": {
+          "type": "number",
+          "default": 3,
+          "description": "Minimum number of component hops to consider as prop drilling"
+        },
+        "reactStateMap.exclude": {
+          "type": "array",
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/*.test.*",
+            "**/*.spec.*"
+          ],
+          "description": "Glob patterns to exclude from analysis"
+        },
+        "reactStateMap.include": {
+          "type": "array",
+          "default": [
+            "**/*.tsx",
+            "**/*.jsx"
+          ],
+          "description": "Glob patterns to include in analysis"
+        },
+        "reactStateMap.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh visualization on file save"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --tree-shaking=true",
+    "build:dev": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "npm run build:dev -- --watch",
+    "package": "vsce package",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@react-state-map/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.10.0",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.3.0"
+  }
+}
