@@ -1,6 +1,6 @@
 {
   "name": "@react-state-map/cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CLI tool to visualize React state flow through static analysis",
   "type": "module",
   "license": "MIT",
