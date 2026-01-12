@@ -1,4 +1,6 @@
 import type { SerializedStateFlowGraph, GraphSummary, ParseWarning } from '@react-state-map/core';
+// @ts-ignore - esbuild imports this as text
+import dagreBundleCode from './dagre.bundle.js';
 
 export function getWebviewContent(
   graph: SerializedStateFlowGraph,
@@ -33,6 +35,7 @@ ${getStyles()}
       </div>
       <div class="header-right">
         <div class="stats" id="stats"></div>
+        <button class="refresh-btn" id="fitBtn" title="Fit to View">⊡</button>
         <button class="refresh-btn" id="refreshBtn" title="Refresh">↻</button>
       </div>
     </header>
@@ -49,6 +52,7 @@ ${getStyles()}
     </main>
     <div class="legend" id="legend"></div>
   </div>
+  <script>${dagreBundleCode}</script>
   <script>
 const vscode = acquireVsCodeApi();
 const graphData = ${graphJSON};
@@ -381,12 +385,14 @@ function getScript(): string {
   const legendEl = document.getElementById('legend');
   const tabs = document.querySelectorAll('.tab');
   const refreshBtn = document.getElementById('refreshBtn');
+  const fitBtn = document.getElementById('fitBtn');
 
   let currentView = 'flow';
   let transform = { x: 0, y: 0, scale: 1 };
   let isDragging = false;
   let dragStart = { x: 0, y: 0 };
   let nodes = [];
+  let dagreGraph = null;
 
   init();
 
@@ -410,6 +416,11 @@ function getScript(): string {
 
     refreshBtn.addEventListener('click', () => {
       vscode.postMessage({ command: 'refresh' });
+    });
+
+    fitBtn.addEventListener('click', () => {
+      fitToView();
+      updateTransform();
     });
 
     svg.addEventListener('mousedown', handleMouseDown);
@@ -452,7 +463,7 @@ function getScript(): string {
     transform.x = mouseX - (mouseX - transform.x) * delta;
     transform.y = mouseY - (mouseY - transform.y) * delta;
     transform.scale *= delta;
-    transform.scale = Math.max(0.1, Math.min(3, transform.scale));
+    transform.scale = Math.max(0.02, Math.min(3, transform.scale));
     updateTransform();
   }
 
@@ -483,121 +494,251 @@ function getScript(): string {
     layoutNodes();
   }
 
-  function layoutNodes() {
-    const width = svg.clientWidth || 800;
-    const height = svg.clientHeight || 600;
-    const nodeWidth = 120;
-    const nodeHeight = 50;
-    const horizontalGap = 60;
-    const verticalGap = 80;
+  function getNodeWidth(node) {
+    return Math.max(100, node.name.length * 8 + 24);
+  }
 
-    const children = new Map();
-    const parents = new Map();
+  // Store dagre graph globally for edge routing (declared at top)
 
-    nodes.forEach(n => {
-      children.set(n.id, []);
-      parents.set(n.id, []);
+  // Find connected components using Union-Find
+  function findConnectedComponents(nodeIds, edges) {
+    const parent = {};
+    const rank = {};
+
+    // Initialize each node as its own parent
+    nodeIds.forEach(id => {
+      parent[id] = id;
+      rank[id] = 0;
     });
 
-    graphData.edges.forEach(edge => {
-      if (edge.mechanism === 'props') {
-        const c = children.get(edge.from) || [];
-        c.push(edge.to);
-        children.set(edge.from, c);
-        const p = parents.get(edge.to) || [];
-        p.push(edge.from);
-        parents.set(edge.to, p);
+    function find(x) {
+      if (parent[x] !== x) {
+        parent[x] = find(parent[x]); // Path compression
       }
-    });
-
-    const roots = nodes.filter(n => {
-      const p = parents.get(n.id) || [];
-      return p.length === 0 || n.data.contextProviders.length > 0;
-    });
-
-    if (roots.length === 0 && nodes.length > 0) {
-      const sorted = [...nodes].sort((a, b) => {
-        const aOut = (children.get(a.id) || []).length;
-        const bOut = (children.get(b.id) || []).length;
-        return bOut - aOut;
-      });
-      roots.push(sorted[0]);
+      return parent[x];
     }
 
-    const levels = new Map();
-    const visited = new Set();
-    let maxLevel = 0;
+    function union(x, y) {
+      const px = find(x);
+      const py = find(y);
+      if (px === py) return;
+      // Union by rank
+      if (rank[px] < rank[py]) {
+        parent[px] = py;
+      } else if (rank[px] > rank[py]) {
+        parent[py] = px;
+      } else {
+        parent[py] = px;
+        rank[px]++;
+      }
+    }
 
-    roots.forEach(root => {
-      if (!visited.has(root.id)) {
-        const queue = [{ node: root, level: 0 }];
-        while (queue.length > 0) {
-          const { node, level } = queue.shift();
-          if (visited.has(node.id)) continue;
-          visited.add(node.id);
-          levels.set(node.id, level);
-          maxLevel = Math.max(maxLevel, level);
-          const childIds = children.get(node.id) || [];
-          childIds.forEach(childId => {
-            const childNode = nodes.find(n => n.id === childId);
-            if (childNode && !visited.has(childId)) {
-              queue.push({ node: childNode, level: level + 1 });
-            }
-          });
+    // Union nodes connected by edges
+    edges.forEach(edge => {
+      if (parent[edge.from] !== undefined && parent[edge.to] !== undefined) {
+        union(edge.from, edge.to);
+      }
+    });
+
+    // Group nodes by their root parent
+    const components = {};
+    nodeIds.forEach(id => {
+      const root = find(id);
+      if (!components[root]) {
+        components[root] = [];
+      }
+      components[root].push(id);
+    });
+
+    return Object.values(components);
+  }
+
+  function layoutNodes() {
+    if (nodes.length === 0) return;
+
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    // Get max node width for spacing calculations
+    let maxNodeWidth = 0;
+    nodes.forEach(n => {
+      maxNodeWidth = Math.max(maxNodeWidth, getNodeWidth(n));
+    });
+
+    // Spacing constants
+    const HORIZONTAL_GAP = maxNodeWidth + 50;
+    const VERTICAL_GAP = 80;
+
+    // Collect edges
+    const allEdges = graphData.edges.filter(e =>
+      e.mechanism === 'props' || e.mechanism === 'context'
+    );
+
+    // Build adjacency lists
+    const children = {};
+    const parents = {};
+    nodes.forEach(n => {
+      children[n.id] = [];
+      parents[n.id] = [];
+    });
+
+    allEdges.forEach(edge => {
+      if (children[edge.from] && parents[edge.to]) {
+        if (!children[edge.from].includes(edge.to)) {
+          children[edge.from].push(edge.to);
+        }
+        if (!parents[edge.to].includes(edge.from)) {
+          parents[edge.to].push(edge.from);
         }
       }
     });
 
-    nodes.forEach(node => {
-      if (!levels.has(node.id)) {
-        maxLevel++;
-        levels.set(node.id, maxLevel);
-      }
+    // Calculate depth using BFS
+    const depth = {};
+    nodes.forEach(n => { depth[n.id] = -1; });
+
+    // Find roots (nodes with no parents)
+    const roots = nodes.filter(n => parents[n.id].length === 0);
+
+    // BFS to assign depths
+    const queue = [];
+    roots.forEach(r => {
+      depth[r.id] = 0;
+      queue.push(r.id);
     });
 
-    const levelGroups = new Map();
-    nodes.forEach(node => {
-      const level = levels.get(node.id) || 0;
-      const group = levelGroups.get(level) || [];
-      group.push(node);
-      levelGroups.set(level, group);
-    });
-
-    const startY = 80;
-    levelGroups.forEach((group, level) => {
-      const y = startY + level * (nodeHeight + verticalGap);
-      const totalWidth = group.length * nodeWidth + (group.length - 1) * horizontalGap;
-      const startX = (width - totalWidth) / 2 + nodeWidth / 2;
-      group.forEach((node, i) => {
-        node.x = startX + i * (nodeWidth + horizontalGap);
-        node.y = y;
-      });
-    });
-
-    for (let iter = 0; iter < 50; iter++) {
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i];
-          const b = nodes[j];
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const minDist = nodeWidth + 20;
-          if (dist < minDist && dist > 0) {
-            const push = (minDist - dist) / 2;
-            const px = (dx / dist) * push;
-            const py = (dy / dist) * push * 0.3;
-            a.x -= px;
-            b.x += px;
-            a.y -= py;
-            b.y += py;
-          }
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      const nodeDepth = depth[nodeId];
+      children[nodeId].forEach(childId => {
+        if (depth[childId] < nodeDepth + 1) {
+          depth[childId] = nodeDepth + 1;
+          queue.push(childId);
         }
-      }
-      nodes.forEach(node => {
-        node.x = Math.max(80, Math.min(width - 80, node.x));
-        node.y = Math.max(60, Math.min(height - 60, node.y));
       });
+    }
+
+    // Assign depth 0 to disconnected nodes
+    nodes.forEach(n => {
+      if (depth[n.id] === -1) depth[n.id] = 0;
+    });
+
+    // Group by depth
+    const nodesByDepth = {};
+    let maxDepth = 0;
+    nodes.forEach(n => {
+      const d = depth[n.id];
+      if (!nodesByDepth[d]) nodesByDepth[d] = [];
+      nodesByDepth[d].push(n);
+      maxDepth = Math.max(maxDepth, d);
+    });
+
+    // Position nodes level by level
+    // Limit nodes per row to prevent extremely wide layouts
+    const MAX_NODES_PER_ROW = 20;
+    let currentY = 0;
+
+    for (let d = 0; d <= maxDepth; d++) {
+      const levelNodes = nodesByDepth[d] || [];
+
+      // Split level into multiple rows if needed
+      const numRows = Math.ceil(levelNodes.length / MAX_NODES_PER_ROW);
+
+      for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
+        const startIdx = rowIndex * MAX_NODES_PER_ROW;
+        const endIdx = Math.min(startIdx + MAX_NODES_PER_ROW, levelNodes.length);
+        const rowNodes = levelNodes.slice(startIdx, endIdx);
+
+        const rowWidth = rowNodes.length * HORIZONTAL_GAP;
+        const startX = -rowWidth / 2 + HORIZONTAL_GAP / 2;
+
+        rowNodes.forEach((node, index) => {
+          node.x = startX + index * HORIZONTAL_GAP;
+          node.y = currentY;
+        });
+
+        currentY += VERTICAL_GAP;
+      }
+
+      // Add extra gap between depth levels
+      if (numRows > 0 && d < maxDepth) {
+        currentY += VERTICAL_GAP / 2;
+      }
+    }
+
+    // Center the entire graph (find bounds and shift)
+    let minX = Infinity, maxX = -Infinity;
+    nodes.forEach(n => {
+      minX = Math.min(minX, n.x);
+      maxX = Math.max(maxX, n.x);
+    });
+    const offsetX = -minX + HORIZONTAL_GAP / 2;
+    nodes.forEach(n => { n.x += offsetX; });
+
+    // Create dagreGraph for edge routing
+    dagreGraph = new dagre.graphlib.Graph();
+    dagreGraph.setGraph({ rankdir: 'TB' });
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+    nodes.forEach(node => {
+      dagreGraph.setNode(node.id, {
+        x: node.x,
+        y: node.y,
+        width: getNodeWidth(node),
+        height: 40
+      });
+    });
+
+    // Fit the view
+    fitToView();
+  }
+
+  function fitToView() {
+    if (nodes.length === 0) return;
+
+    const width = svg.clientWidth || 800;
+    const height = svg.clientHeight || 600;
+    const padding = 40;
+
+    // Calculate bounding box of all nodes
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+
+    nodes.forEach(node => {
+      const nodeW = getNodeWidth(node);
+      const nodeH = 32;
+      minX = Math.min(minX, node.x - nodeW / 2);
+      maxX = Math.max(maxX, node.x + nodeW / 2);
+      minY = Math.min(minY, node.y - nodeH / 2);
+      maxY = Math.max(maxY, node.y + nodeH / 2);
+    });
+
+    const graphWidth = maxX - minX;
+    const graphHeight = maxY - minY;
+
+    // For small graphs (< 50 nodes), try to fit in view
+    // For large graphs, start at scale 1.0 and let users zoom out
+    if (nodes.length < 50) {
+      const availableWidth = width - padding * 2;
+      const availableHeight = height - padding * 2;
+      const scaleX = availableWidth / graphWidth;
+      const scaleY = availableHeight / graphHeight;
+      let scale = Math.min(scaleX, scaleY, 1.0);
+
+      const graphCenterX = (minX + maxX) / 2;
+      const graphCenterY = (minY + maxY) / 2;
+      const viewCenterX = width / 2;
+      const viewCenterY = height / 2;
+
+      transform.scale = scale;
+      transform.x = viewCenterX - graphCenterX * scale;
+      transform.y = viewCenterY - graphCenterY * scale;
+    } else {
+      // Large graph: start at scale 1.0, positioned at top-left
+      // User can zoom out with scroll wheel to see everything
+      transform.scale = 1.0;
+      transform.x = padding - minX;
+      transform.y = padding - minY;
     }
   }
 
@@ -639,19 +780,34 @@ function getScript(): string {
   }
 
   function renderFlowView(g) {
-    graphData.edges.forEach(edge => {
-      const source = nodes.find(n => n.id === edge.from);
-      const target = nodes.find(n => n.id === edge.to);
-      if (source && target) {
-        drawEdge(g, source, target, edge);
-      }
-    });
+    // Draw edges first (behind nodes)
+    try {
+      graphData.edges.forEach(edge => {
+        const source = nodes.find(n => n.id === edge.from);
+        const target = nodes.find(n => n.id === edge.to);
+        if (source && target) {
+          drawEdge(g, source, target, edge);
+        }
+      });
+    } catch (e) {
+      console.error('Error drawing edges:', e);
+    }
 
+    // Always draw nodes
     nodes.forEach(node => drawNode(g, node));
   }
 
   function renderContextView(g) {
     const total = graphData.contextBoundaries.length;
+
+    // Helper to normalize context names for matching
+    function normalizeContextName(name) {
+      return name.toLowerCase()
+        .replace(/context$/i, '')
+        .replace(/provider$/i, '')
+        .replace(/consumer$/i, '');
+    }
+
     graphData.contextBoundaries.forEach((boundary, index) => {
       const provider = nodes.find(n => n.id === boundary.providerComponent);
 
@@ -662,17 +818,27 @@ function getScript(): string {
 
       // Draw boundary if we have provider
       if (provider) {
+        const normalizedBoundaryName = normalizeContextName(boundary.contextName);
+
         // Include ALL nodes that consume this context by checking their data
-        const contextConsumers = nodes.filter(n =>
-          n.data.contextConsumers &&
-          n.data.contextConsumers.includes(boundary.contextName)
-        );
+        // Use flexible matching to handle different naming conventions
+        const contextConsumers = nodes.filter(n => {
+          if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
+
+          return n.data.contextConsumers.some(consumerContext => {
+            const normalizedConsumer = normalizeContextName(consumerContext);
+            // Check if names match (either exactly or normalized)
+            return consumerContext === boundary.contextName ||
+                   normalizedConsumer === normalizedBoundaryName ||
+                   normalizedConsumer.includes(normalizedBoundaryName) ||
+                   normalizedBoundaryName.includes(normalizedConsumer);
+          });
+        });
 
         const allConsumers = [...new Set([...consumers, ...contextConsumers])];
 
-        if (allConsumers.length > 0) {
-          drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
-        }
+        // Even if there are no direct consumers, show the boundary for the provider
+        drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
       }
     });
 
@@ -726,7 +892,7 @@ function getScript(): string {
     group.setAttribute('class', 'node');
     group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
 
-    const width = Math.max(80, node.name.length * 7 + 16);
+    const width = getNodeWidth(node);
     const height = 32;
 
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -765,40 +931,65 @@ function getScript(): string {
     }
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const nodeHeight = 18;
-
-    // Calculate edge points from node edges, not centers
-    const dx = target.x - source.x;
-    const dy = target.y - source.y;
-
-    let startX = source.x;
-    let startY = source.y + nodeHeight; // Bottom of source
-    let endX = target.x;
-    let endY = target.y - nodeHeight; // Top of target
-
-    // If target is above source, flip
-    if (dy < 0) {
-      startY = source.y - nodeHeight;
-      endY = target.y + nodeHeight;
-    }
-
-    // If mostly horizontal, use sides
-    if (Math.abs(dx) > Math.abs(dy) * 2) {
-      startY = source.y;
-      endY = target.y;
-      startX = source.x + (dx > 0 ? 50 : -50);
-      endX = target.x + (dx > 0 ? -50 : 50);
-    }
-
-    // Create smooth bezier curve
-    const midY = (startY + endY) / 2;
+    const nodeHeight = 20;
+    const sourceWidth = getNodeWidth(source) / 2;
+    const targetWidth = getNodeWidth(target) / 2;
 
     let d;
-    if (Math.abs(dx) < 20) {
-      // Nearly vertical - straight line
-      d = \`M\${startX},\${startY} L\${endX},\${endY}\`;
-    } else {
-      // Curved path
+
+    // Try to use dagre's calculated edge path if available
+    if (dagreGraph) {
+      const dagreEdge = dagreGraph.edge(source.id, target.id);
+      if (dagreEdge && dagreEdge.points && dagreEdge.points.length > 0) {
+        // Use dagre's calculated path points
+        const points = dagreEdge.points;
+        d = 'M' + points[0].x + ',' + points[0].y;
+
+        if (points.length === 2) {
+          // Simple line
+          d += ' L' + points[1].x + ',' + points[1].y;
+        } else if (points.length >= 3) {
+          // Create smooth curve through all points
+          for (let i = 1; i < points.length - 1; i++) {
+            const p0 = points[i - 1];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            // Quadratic bezier through midpoints
+            d += ' Q' + p1.x + ',' + p1.y + ' ' +
+              ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
+          }
+          // Final line to last point
+          d += ' L' + points[points.length - 1].x + ',' + points[points.length - 1].y;
+        }
+      }
+    }
+
+    // Fallback if dagre path not available
+    if (!d) {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+
+      let startX = source.x;
+      let startY = source.y + nodeHeight; // Bottom of source
+      let endX = target.x;
+      let endY = target.y - nodeHeight; // Top of target
+
+      // If target is above source, flip
+      if (dy < 0) {
+        startY = source.y - nodeHeight;
+        endY = target.y + nodeHeight;
+      }
+
+      // If mostly horizontal, use sides
+      if (Math.abs(dx) > Math.abs(dy) * 2) {
+        startY = source.y;
+        endY = target.y;
+        startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
+        endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
+      }
+
+      // Create smooth bezier curve
+      const midY = (startY + endY) / 2;
       d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
     }
 
@@ -810,14 +1001,27 @@ function getScript(): string {
   }
 
   function drawContextBoundary(g, provider, consumers, name, index, total) {
-    const allNodes = [provider, ...consumers];
+    // Include provider in the boundary nodes
+    const allNodes = [provider, ...consumers].filter(n => n !== undefined);
+    if (allNodes.length === 0) return;
+
     const basePadding = 50;
     const offset = (total - 1 - index) * 30; // Outer contexts have more padding
 
-    const minX = Math.min(...allNodes.map(n => n.x)) - basePadding - offset;
-    const minY = Math.min(...allNodes.map(n => n.y)) - basePadding - offset;
-    const maxX = Math.max(...allNodes.map(n => n.x)) + basePadding + offset;
-    const maxY = Math.max(...allNodes.map(n => n.y)) + basePadding + offset;
+    // Calculate bounding box with node widths considered
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    allNodes.forEach(n => {
+      const nodeWidth = getNodeWidth(n);
+      minX = Math.min(minX, n.x - nodeWidth / 2);
+      maxX = Math.max(maxX, n.x + nodeWidth / 2);
+      minY = Math.min(minY, n.y - 20);
+      maxY = Math.max(maxY, n.y + 20);
+    });
+
+    minX = minX - basePadding - offset;
+    minY = minY - basePadding - offset;
+    maxX = maxX + basePadding + offset;
+    maxY = maxY + basePadding + offset;
 
     const rectX = minX - 30;
     const rectY = minY - 25;

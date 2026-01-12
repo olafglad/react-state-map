@@ -135,6 +135,7 @@ export class ReactParser {
       }
     }
 
+    // First pass: create edges for direct state passing
     for (const { component, jsxChildren } of parsedData) {
       for (const child of jsxChildren) {
         const childComponent = componentsByName.get(child.componentName);
@@ -157,7 +158,10 @@ export class ReactParser {
             };
             edges.push(edge);
 
-            childComponent.stateUsed.push(sourceState);
+            // Track that child receives this state via props
+            if (!childComponent.stateUsed.some(s => s.id === sourceState.id)) {
+              childComponent.stateUsed.push(sourceState);
+            }
 
             const prop = component.props.find(p => p.name === propValue);
             if (prop) {
@@ -166,7 +170,78 @@ export class ReactParser {
           }
         }
       }
+    }
 
+    // Second pass: update hop counts for prop drilling detection
+    // This traces props through the component hierarchy and updates hop counts
+    let changed = true;
+    let maxIterations = 10; // Prevent infinite loops
+
+    while (changed && maxIterations > 0) {
+      changed = false;
+      maxIterations--;
+
+      for (const { component, jsxChildren } of parsedData) {
+        for (const child of jsxChildren) {
+          const childComponent = componentsByName.get(child.componentName);
+          if (!childComponent) continue;
+
+          for (const [propName, propValue] of child.props) {
+            if (propName === '...spread') continue;
+
+            // Check if this is a prop being passed through (not state defined here)
+            const receivedProp = component.props.find(p => p.name === propValue);
+            if (receivedProp && !component.stateProvided.some(s => s.name === propValue)) {
+              // This component is passing through a received prop
+              // Find any existing edges that deliver state to this component with this prop name
+              const incomingEdge = edges.find(
+                e => e.to === component.id && e.propName === propValue
+              );
+
+              if (incomingEdge) {
+                // Find existing outgoing edge for this state
+                const existingEdge = edges.find(
+                  e => e.from === component.id &&
+                       e.to === childComponent.id &&
+                       e.stateId === incomingEdge.stateId
+                );
+
+                if (existingEdge) {
+                  // Update the hop count if the incoming edge has a higher count
+                  const newHops = incomingEdge.hops + 1;
+                  if (existingEdge.hops < newHops) {
+                    existingEdge.hops = newHops;
+                    changed = true;
+                  }
+                } else {
+                  // Create new edge
+                  const edge: StateFlowEdge = {
+                    id: `edge_${edges.length}`,
+                    from: component.id,
+                    to: childComponent.id,
+                    stateId: incomingEdge.stateId,
+                    mechanism: 'props',
+                    propName,
+                    hops: incomingEdge.hops + 1,
+                  };
+                  edges.push(edge);
+                  changed = true;
+
+                  // Track state used by child
+                  const state = stateNodes.get(incomingEdge.stateId);
+                  if (state && !childComponent.stateUsed.some(s => s.id === state.id)) {
+                    childComponent.stateUsed.push(state);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Third pass: create context boundaries and edges
+    for (const { component } of parsedData) {
       for (const provider of component.contextProviders) {
         const boundary: ContextBoundary = {
           contextId: provider.contextId,
@@ -213,12 +288,41 @@ export class ReactParser {
     component: ComponentNode,
     stateNodes: Map<string, StateNode>
   ): StateNode | null {
+    // First, check if it matches state defined in this component
     for (const state of component.stateProvided) {
       if (state.name === name) {
         return state;
       }
     }
 
+    // Check if it matches state used (received as props from parent)
+    for (const state of component.stateUsed) {
+      if (state.name === name) {
+        return state;
+      }
+    }
+
+    // Check if the name matches a prop this component receives
+    // This handles prop drilling where a prop is passed through
+    const matchingProp = component.props.find(p => p.name === name);
+    if (matchingProp) {
+      // Create a virtual state node to track this prop chain
+      const propStateId = `prop_${component.id}_${name}`;
+      // Check if we already have a state entry for this
+      for (const state of stateNodes.values()) {
+        if (state.id === propStateId) {
+          return state;
+        }
+      }
+      // Look for any state that was passed to this component with this prop name
+      for (const state of stateNodes.values()) {
+        if (state.name === name) {
+          return state;
+        }
+      }
+    }
+
+    // Fallback: check all state nodes in same file
     for (const state of stateNodes.values()) {
       if (state.name === name && state.filePath === component.filePath) {
         return state;
@@ -253,7 +357,7 @@ export class ReactParser {
 
       for (const pathInfo of paths) {
         if (pathInfo.path.length >= threshold) {
-          const unusedCount = this.countUnusedHops(pathInfo.path, stateId, components);
+          const unusedCount = this.countUnusedHops(pathInfo.path, stateId, components, edges);
 
           if (unusedCount >= threshold - 1) {
             drillingPaths.push({
@@ -348,7 +452,8 @@ export class ReactParser {
   private countUnusedHops(
     path: string[],
     stateId: string,
-    components: Map<string, ComponentNode>
+    components: Map<string, ComponentNode>,
+    edges: StateFlowEdge[]
   ): number {
     let unused = 0;
 
@@ -364,11 +469,24 @@ export class ReactParser {
       }
 
       if (component) {
-        const usesState = component.stateUsed.some(s => s.id === stateId) ||
-          component.stateProvided.some(s => s.id === stateId);
+        // A component "uses" a state if it DEFINES that state (stateProvided)
+        // A component is a "pass-through" if it receives the state and passes it to children
+        const definesState = component.stateProvided.some(s => s.id === stateId);
 
-        if (!usesState) {
-          unused++;
+        if (!definesState) {
+          // Check if this component receives the state and passes it to children
+          // If it only passes through (receives and sends), it's "unused"
+          const receivesState = edges.some(
+            e => e.to === component.id && e.stateId === stateId && e.mechanism === 'props'
+          );
+          const passesState = edges.some(
+            e => e.from === component.id && e.stateId === stateId && e.mechanism === 'props'
+          );
+
+          // If it receives and passes, it's a pass-through (unused hop)
+          if (receivesState && passesState) {
+            unused++;
+          }
         }
       }
     }

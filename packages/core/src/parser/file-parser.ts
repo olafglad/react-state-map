@@ -230,9 +230,27 @@ function extractCustomHook(callExpr: CallExpression, filePath: string, hookName:
   };
 }
 
+// Common provider component names that wrap context
+const KNOWN_PROVIDER_NAMES = new Set([
+  'Provider',
+  'ThemeProvider',
+  'StoreProvider',
+  'AuthProvider',
+  'QueryClientProvider',
+  'ReduxProvider',
+  'ApolloProvider',
+  'ConfigProvider',
+  'I18nProvider',
+  'IntlProvider',
+  'RouterProvider',
+  'SessionProvider',
+  'UserProvider',
+]);
+
 function extractContextProvider(jsxElement: JsxOpeningElement | JsxSelfClosingElement): ContextInfo | null {
   const tagName = jsxElement.getTagNameNode().getText();
 
+  // Pattern 1: <ContextName.Provider value={...}>
   if (tagName.endsWith('.Provider')) {
     const contextName = tagName.replace('.Provider', '');
     const valueAttr = jsxElement.getAttribute('value');
@@ -252,13 +270,69 @@ function extractContextProvider(jsxElement: JsxOpeningElement | JsxSelfClosingEl
     };
   }
 
+  // Pattern 2: Known provider component names like <ThemeProvider>, <Provider>, etc.
+  if (KNOWN_PROVIDER_NAMES.has(tagName) || tagName.endsWith('Provider')) {
+    // Extract context name from tag (remove Provider suffix if present)
+    const contextName = tagName.endsWith('Provider') && tagName !== 'Provider'
+      ? tagName.replace(/Provider$/, '')
+      : tagName;
+
+    // Try to get the value prop for context providers
+    const valueAttr = jsxElement.getAttribute('value');
+    let providerValue: string | undefined;
+
+    if (valueAttr && Node.isJsxAttribute(valueAttr)) {
+      const initializer = valueAttr.getInitializer();
+      if (initializer) {
+        providerValue = initializer.getText();
+      }
+    }
+
+    // For redux-style Provider, look for 'store' prop
+    const storeAttr = jsxElement.getAttribute('store');
+    if (storeAttr && Node.isJsxAttribute(storeAttr)) {
+      const initializer = storeAttr.getInitializer();
+      if (initializer) {
+        providerValue = providerValue || initializer.getText();
+      }
+    }
+
+    // For other providers, look for common prop names
+    const commonProps = ['client', 'theme', 'config', 'context'];
+    for (const propName of commonProps) {
+      if (providerValue) break;
+      const attr = jsxElement.getAttribute(propName);
+      if (attr && Node.isJsxAttribute(attr)) {
+        const initializer = attr.getInitializer();
+        if (initializer) {
+          providerValue = initializer.getText();
+        }
+      }
+    }
+
+    return {
+      contextId: generateId('context'),
+      contextName,
+      providerValue,
+    };
+  }
+
   return null;
 }
 
 function extractJsxChild(jsxElement: JsxOpeningElement | JsxSelfClosingElement): JsxChildInfo | null {
   const tagName = jsxElement.getTagNameNode().getText();
 
-  if (!isReactComponent(tagName) || tagName.endsWith('.Provider') || tagName.endsWith('.Consumer')) {
+  // Skip non-components
+  if (!isReactComponent(tagName)) {
+    return null;
+  }
+
+  // Skip context providers and consumers - they're tracked separately
+  if (tagName.endsWith('.Provider') ||
+      tagName.endsWith('.Consumer') ||
+      KNOWN_PROVIDER_NAMES.has(tagName) ||
+      tagName.endsWith('Provider')) {
     return null;
   }
 

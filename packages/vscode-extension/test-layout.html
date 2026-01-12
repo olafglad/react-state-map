@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Layout Test</title>
+  <style>
+    body { margin: 0; background: #1e1e1e; font-family: sans-serif; }
+    svg { width: 100vw; height: 100vh; }
+    .node rect { fill: #4caf50; rx: 4; }
+    .node text { fill: white; font-size: 11px; text-anchor: middle; dominant-baseline: middle; }
+  </style>
+</head>
+<body>
+  <svg id="graph"></svg>
+  <script>
+    // Generate 357 fake nodes like the real project
+    const nodes = [];
+    for (let i = 0; i < 357; i++) {
+      nodes.push({
+        id: 'node' + i,
+        name: 'Component' + i,
+        x: 0,
+        y: 0
+      });
+    }
+
+    // SIMPLE GRID LAYOUT - same as in extension
+    const CELL_WIDTH = 250;
+    const CELL_HEIGHT = 70;
+    const COLS_PER_ROW = 15;
+
+    nodes.forEach((node, index) => {
+      const row = Math.floor(index / COLS_PER_ROW);
+      const col = index % COLS_PER_ROW;
+      node.x = col * CELL_WIDTH + CELL_WIDTH / 2;
+      node.y = row * CELL_HEIGHT + CELL_HEIGHT / 2;
+    });
+
+    // Render
+    const svg = document.getElementById('graph');
+
+    nodes.forEach(node => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'node');
+      g.setAttribute('transform', `translate(${node.x}, ${node.y})`);
+
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', -60);
+      rect.setAttribute('y', -16);
+      rect.setAttribute('width', 120);
+      rect.setAttribute('height', 32);
+
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.textContent = node.name;
+
+      g.appendChild(rect);
+      g.appendChild(text);
+      svg.appendChild(g);
+    });
+
+    console.log('First 5 node positions:', nodes.slice(0, 5).map(n => ({name: n.name, x: n.x, y: n.y})));
+  </script>
+</body>
+</html>

@@ -98,7 +98,7 @@ That's it! The visualization updates automatically when you save files.
 Also available as a CLI for CI/CD pipelines and documentation:
 
 ```bash
-npx react-state-map ./src --output state-map.html
+npx @react-state-map/cli ./src --output state-map.html
 ```
 
 Generates a standalone HTML file you can open in any browser or include in documentation.

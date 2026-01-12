@@ -1,7 +1,14 @@
 {
   "name": "@react-state-map/core",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Core parsing and graph building for React state visualization",
+  "license": "MIT",
+  "author": "Olaf Glad",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/olafglad/react-state-map",
+    "directory": "packages/core"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -24,6 +31,15 @@
     "typescript": "^5.3.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "react",
+    "state",
+    "static-analysis",
+    "typescript",
+    "ast"
   ]
 }
