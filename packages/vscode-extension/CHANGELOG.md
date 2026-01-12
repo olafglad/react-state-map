@@ -2,6 +2,21 @@
 
 All notable changes to React State Map will be documented in this file.
 
+## [0.1.3] - 2025-01-07
+
+### Fixed
+- **Critical Bug Fix**: Fixed `dagreGraph` variable hoisting issue that caused State Flow view to crash
+- **Layout Engine Rewrite**: Replaced dagre-only layout with custom hierarchical positioning
+  - Nodes now arranged by depth (parents at top, children below)
+  - Maximum 20 nodes per row to prevent extremely wide layouts
+  - Extra vertical spacing between hierarchy levels
+  - No more overlapping nodes
+- **Error Handling**: Added try-catch around edge drawing to prevent crashes
+
+### Changed
+- Bundled dagre.js directly for edge routing (more reliable)
+- Improved fit-to-view behavior for large graphs
+
 ## [0.1.2] - 2025-01-06
 
 ### Fixed

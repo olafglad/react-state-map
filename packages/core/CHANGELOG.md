@@ -2,6 +2,12 @@
 
 All notable changes to @react-state-map/core will be documented in this file.
 
+## [0.1.3] - 2025-01-07
+
+### Changed
+- Updated README with correct API usage examples
+- Fixed VS Code extension marketplace link
+
 ## [0.1.2] - 2025-01-06
 
 ### Fixed

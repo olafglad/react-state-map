@@ -2,6 +2,12 @@
 
 All notable changes to @react-state-map/cli will be documented in this file.
 
+## [0.1.3] - 2025-01-07
+
+### Changed
+- Updated README with correct VS Code extension marketplace link
+- Includes @react-state-map/core v0.1.3
+
 ## [0.1.2] - 2025-01-06
 
 ### Fixed
