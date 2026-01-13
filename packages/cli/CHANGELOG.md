@@ -2,6 +2,22 @@
 
 All notable changes to @react-state-map/cli will be documented in this file.
 
+## [0.1.4] - 2025-01-13
+
+### Added
+- **Improved Drilling View**: Redesigned prop drilling visualization
+  - Shows only drilling path components as clean vertical chains
+  - Color-coded: Blue (defines state), Orange (pass-through), Green (uses state)
+  - State name and hop count displayed above each chain
+- **Dynamic Legends**: View-specific legends for State Flow, Context, and Drilling
+- **Context Provider Highlighting**: Purple border on provider nodes in Context view
+- **dagre.js Bundled**: Included dagre for edge routing (matches VS Code extension)
+
+### Changed
+- Complete rewrite of HTML renderer to match VS Code extension
+- Hierarchical depth-based layout algorithm
+- Maximum 20 nodes per row to prevent wide layouts
+
 ## [0.1.3] - 2025-01-07
 
 ### Changed

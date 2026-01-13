@@ -1,7 +1,42 @@
 import type { SerializedStateFlowGraph } from '@react-state-map/core';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load dagre bundle at runtime
+function getDagreBundle(): string {
+  const bundlePath = path.join(__dirname, 'dagre.bundle.js');
+  // In development, look in src directory
+  const srcBundlePath = path.join(__dirname, '..', '..', 'src', 'renderers', 'dagre.bundle.js');
+
+  if (fs.existsSync(bundlePath)) {
+    return fs.readFileSync(bundlePath, 'utf-8');
+  } else if (fs.existsSync(srcBundlePath)) {
+    return fs.readFileSync(srcBundlePath, 'utf-8');
+  }
+
+  // Fallback: inline minimal dagre from CDN comment
+  return '/* dagre bundle not found - edge routing will use fallback */';
+}
 
 export function generateHTML(graph: SerializedStateFlowGraph): string {
   const graphJSON = JSON.stringify(graph);
+  const dagreBundle = getDagreBundle();
+
+  // Calculate summary stats
+  const components = Object.values(graph.components);
+  const stateCount = Object.keys(graph.stateNodes).length;
+  const edgeCount = graph.edges.length;
+  const drillingCount = graph.propDrillingPaths.length;
+
+  const summaryJSON = JSON.stringify({
+    components: { totalComponents: components.length },
+    state: { totalStateNodes: stateCount },
+    flow: { totalEdges: edgeCount }
+  });
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -16,13 +51,18 @@ ${getStyles()}
 <body>
   <div class="app">
     <header class="header">
-      <h1>React State Map</h1>
-      <nav class="tabs">
-        <button class="tab active" data-view="flow">State Flow</button>
-        <button class="tab" data-view="context">Context Boundaries</button>
-        <button class="tab" data-view="drilling">Prop Drilling</button>
-      </nav>
-      <div class="stats" id="stats"></div>
+      <div class="header-left">
+        <h1>React State Map</h1>
+        <nav class="tabs">
+          <button class="tab active" data-view="flow">State Flow</button>
+          <button class="tab" data-view="context">Context</button>
+          <button class="tab" data-view="drilling">Drilling</button>
+        </nav>
+      </div>
+      <div class="header-right">
+        <div class="stats" id="stats"></div>
+        <button class="fit-btn" id="fitBtn" title="Fit to View">Fit</button>
+      </div>
     </header>
     <main class="main">
       <div class="canvas-container">
@@ -31,14 +71,16 @@ ${getStyles()}
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-content">
           <h3>Select a node</h3>
-          <p>Click on a component or state node to see details</p>
+          <p>Click on a component to see details</p>
         </div>
       </aside>
     </main>
     <div class="legend" id="legend"></div>
   </div>
+  <script>${dagreBundle}</script>
   <script>
 const graphData = ${graphJSON};
+const summaryData = ${summaryJSON};
 ${getScript()}
   </script>
 </body>
@@ -55,6 +97,7 @@ function getStyles(): string {
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      font-size: 14px;
       background: #0d1117;
       color: #c9d1d9;
       overflow: hidden;
@@ -69,14 +112,26 @@ function getStyles(): string {
     .header {
       display: flex;
       align-items: center;
-      gap: 24px;
-      padding: 12px 24px;
+      justify-content: space-between;
+      padding: 12px 20px;
       background: #161b22;
       border-bottom: 1px solid #30363d;
     }
 
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
     .header h1 {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 600;
       color: #58a6ff;
     }
@@ -87,11 +142,11 @@ function getStyles(): string {
     }
 
     .tab {
-      padding: 8px 16px;
+      padding: 6px 14px;
       border: none;
       background: transparent;
       color: #8b949e;
-      font-size: 14px;
+      font-size: 13px;
       cursor: pointer;
       border-radius: 6px;
       transition: all 0.15s;
@@ -108,13 +163,26 @@ function getStyles(): string {
     }
 
     .stats {
-      margin-left: auto;
-      font-size: 13px;
+      font-size: 12px;
       color: #8b949e;
     }
 
     .stats span {
-      margin-left: 16px;
+      margin-left: 14px;
+    }
+
+    .fit-btn {
+      padding: 6px 12px;
+      border: none;
+      background: #21262d;
+      color: #c9d1d9;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+
+    .fit-btn:hover {
+      background: #30363d;
     }
 
     .main {
@@ -140,7 +208,7 @@ function getStyles(): string {
     }
 
     .sidebar {
-      width: 320px;
+      width: 300px;
       background: #161b22;
       border-left: 1px solid #30363d;
       overflow-y: auto;
@@ -153,7 +221,7 @@ function getStyles(): string {
     .sidebar h3 {
       font-size: 14px;
       font-weight: 600;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
       color: #f0f6fc;
     }
 
@@ -164,8 +232,8 @@ function getStyles(): string {
     }
 
     .sidebar-section {
-      margin-bottom: 20px;
-      padding-bottom: 20px;
+      margin-bottom: 18px;
+      padding-bottom: 18px;
       border-bottom: 1px solid #30363d;
     }
 
@@ -173,10 +241,21 @@ function getStyles(): string {
       border-bottom: none;
     }
 
+    .file-link {
+      display: block;
+      padding: 6px 10px;
+      margin: 6px 0;
+      background: #21262d;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #58a6ff;
+      text-decoration: none;
+    }
+
     .detail-row {
       display: flex;
       justify-content: space-between;
-      padding: 6px 0;
+      padding: 5px 0;
       font-size: 13px;
     }
 
@@ -186,25 +265,33 @@ function getStyles(): string {
 
     .detail-value {
       color: #c9d1d9;
-      text-align: right;
     }
 
     .tag {
       display: inline-block;
-      padding: 2px 8px;
+      padding: 3px 8px;
       border-radius: 12px;
-      font-size: 12px;
-      margin: 2px;
+      font-size: 11px;
+      margin: 3px;
     }
 
-    .tag-state { background: #1f6feb33; color: #58a6ff; }
-    .tag-context { background: #8957e533; color: #bc8cff; }
-    .tag-props { background: #3fb95033; color: #56d364; }
+    .tag-state {
+      background: #1f6feb;
+      color: white;
+    }
+    .tag-context {
+      background: #8957e5;
+      color: white;
+    }
+    .tag-props {
+      background: #238636;
+      color: white;
+    }
 
     .legend {
       display: flex;
-      gap: 24px;
-      padding: 12px 24px;
+      gap: 20px;
+      padding: 10px 20px;
       background: #161b22;
       border-top: 1px solid #30363d;
       font-size: 12px;
@@ -222,19 +309,17 @@ function getStyles(): string {
       border-radius: 3px;
     }
 
-    /* Graph node styles */
+    /* Graph styles */
     .node {
       cursor: pointer;
     }
 
-    .node rect {
-      transition: filter 0.15s, stroke 0.15s;
+    .node-rect {
+      transition: opacity 0.15s;
     }
 
-    .node:hover rect {
-      filter: brightness(1.2);
-      stroke: white;
-      stroke-width: 2;
+    .node:hover .node-rect {
+      opacity: 0.8;
     }
 
     .node-component {
@@ -243,10 +328,6 @@ function getStyles(): string {
 
     .node-component-state {
       fill: #1f6feb;
-    }
-
-    .node-state {
-      fill: #8957e5;
     }
 
     .node-label {
@@ -276,22 +357,12 @@ function getStyles(): string {
       stroke-width: 3;
     }
 
-    .edge-arrow {
-      fill: #3fb950;
-    }
-
     .context-boundary {
-      fill: #8957e520;
+      fill: rgba(137, 87, 229, 0.1);
       stroke: #8957e5;
       stroke-width: 2;
       stroke-dasharray: 8, 4;
-      rx: 12;
-    }
-
-    .drilling-path {
-      stroke: #f85149;
-      stroke-width: 4;
-      opacity: 0.6;
+      rx: 8;
     }
 
     .empty-state {
@@ -302,12 +373,22 @@ function getStyles(): string {
       height: 100%;
       color: #8b949e;
       text-align: center;
+      padding: 20px;
     }
 
     .empty-state h2 {
       font-size: 18px;
       margin-bottom: 8px;
       color: #c9d1d9;
+    }
+
+    .warning-badge {
+      background: #9e6a03;
+      color: #f0f6fc;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      margin-left: 10px;
     }
   `;
 }
@@ -320,15 +401,15 @@ function getScript(): string {
   const statsEl = document.getElementById('stats');
   const legendEl = document.getElementById('legend');
   const tabs = document.querySelectorAll('.tab');
+  const fitBtn = document.getElementById('fitBtn');
 
   let currentView = 'flow';
   let transform = { x: 0, y: 0, scale: 1 };
   let isDragging = false;
   let dragStart = { x: 0, y: 0 };
   let nodes = [];
-  let simulation = null;
+  let dagreGraph = null;
 
-  // Initialize
   init();
 
   function init() {
@@ -345,22 +426,30 @@ function getScript(): string {
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         currentView = tab.dataset.view;
+        updateLegend();
         render();
       });
+    });
+
+    fitBtn.addEventListener('click', () => {
+      fitToView();
+      updateTransform();
     });
 
     svg.addEventListener('mousedown', handleMouseDown);
     svg.addEventListener('mousemove', handleMouseMove);
     svg.addEventListener('mouseup', handleMouseUp);
     svg.addEventListener('mouseleave', handleMouseUp);
-    svg.addEventListener('wheel', handleWheel);
+    svg.addEventListener('wheel', handleWheel, { passive: false });
   }
 
   function handleMouseDown(e) {
-    if (e.target === svg || e.target.tagName === 'g') {
-      isDragging = true;
-      dragStart = { x: e.clientX - transform.x, y: e.clientY - transform.y };
-      svg.style.cursor = 'grabbing';
+    if (e.target === svg || e.target.closest('.graph-container')) {
+      if (!e.target.closest('.node')) {
+        isDragging = true;
+        dragStart = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+        svg.style.cursor = 'grabbing';
+      }
     }
   }
 
@@ -387,7 +476,7 @@ function getScript(): string {
     transform.x = mouseX - (mouseX - transform.x) * delta;
     transform.y = mouseY - (mouseY - transform.y) * delta;
     transform.scale *= delta;
-    transform.scale = Math.max(0.1, Math.min(3, transform.scale));
+    transform.scale = Math.max(0.02, Math.min(3, transform.scale));
     updateTransform();
   }
 
@@ -402,8 +491,7 @@ function getScript(): string {
     nodes = [];
     const components = Object.values(graphData.components);
 
-    // Create component nodes
-    components.forEach((comp, i) => {
+    components.forEach((comp) => {
       const hasState = comp.stateProvided.length > 0;
       nodes.push({
         id: comp.id,
@@ -416,147 +504,201 @@ function getScript(): string {
       });
     });
 
-    // Use hierarchical layout
     layoutNodes();
   }
 
+  function getNodeWidth(node) {
+    return Math.max(100, node.name.length * 8 + 24);
+  }
+
   function layoutNodes() {
+    if (nodes.length === 0) return;
+
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    // Get max node width for spacing calculations
+    let maxNodeWidth = 0;
+    nodes.forEach(n => {
+      maxNodeWidth = Math.max(maxNodeWidth, getNodeWidth(n));
+    });
+
+    // Spacing constants
+    const HORIZONTAL_GAP = maxNodeWidth + 50;
+    const VERTICAL_GAP = 80;
+
+    // Collect edges
+    const allEdges = graphData.edges.filter(e =>
+      e.mechanism === 'props' || e.mechanism === 'context'
+    );
+
+    // Build adjacency lists
+    const children = {};
+    const parents = {};
+    nodes.forEach(n => {
+      children[n.id] = [];
+      parents[n.id] = [];
+    });
+
+    allEdges.forEach(edge => {
+      if (children[edge.from] && parents[edge.to]) {
+        if (!children[edge.from].includes(edge.to)) {
+          children[edge.from].push(edge.to);
+        }
+        if (!parents[edge.to].includes(edge.from)) {
+          parents[edge.to].push(edge.from);
+        }
+      }
+    });
+
+    // Calculate depth using BFS
+    const depth = {};
+    nodes.forEach(n => { depth[n.id] = -1; });
+
+    // Find roots (nodes with no parents)
+    const roots = nodes.filter(n => parents[n.id].length === 0);
+
+    // BFS to assign depths
+    const queue = [];
+    roots.forEach(r => {
+      depth[r.id] = 0;
+      queue.push(r.id);
+    });
+
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      const nodeDepth = depth[nodeId];
+      children[nodeId].forEach(childId => {
+        if (depth[childId] < nodeDepth + 1) {
+          depth[childId] = nodeDepth + 1;
+          queue.push(childId);
+        }
+      });
+    }
+
+    // Assign depth 0 to disconnected nodes
+    nodes.forEach(n => {
+      if (depth[n.id] === -1) depth[n.id] = 0;
+    });
+
+    // Group by depth
+    const nodesByDepth = {};
+    let maxDepth = 0;
+    nodes.forEach(n => {
+      const d = depth[n.id];
+      if (!nodesByDepth[d]) nodesByDepth[d] = [];
+      nodesByDepth[d].push(n);
+      maxDepth = Math.max(maxDepth, d);
+    });
+
+    // Position nodes level by level
+    // Limit nodes per row to prevent extremely wide layouts
+    const MAX_NODES_PER_ROW = 20;
+    let currentY = 0;
+
+    for (let d = 0; d <= maxDepth; d++) {
+      const levelNodes = nodesByDepth[d] || [];
+
+      // Split level into multiple rows if needed
+      const numRows = Math.ceil(levelNodes.length / MAX_NODES_PER_ROW);
+
+      for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
+        const startIdx = rowIndex * MAX_NODES_PER_ROW;
+        const endIdx = Math.min(startIdx + MAX_NODES_PER_ROW, levelNodes.length);
+        const rowNodes = levelNodes.slice(startIdx, endIdx);
+
+        const rowWidth = rowNodes.length * HORIZONTAL_GAP;
+        const startX = -rowWidth / 2 + HORIZONTAL_GAP / 2;
+
+        rowNodes.forEach((node, index) => {
+          node.x = startX + index * HORIZONTAL_GAP;
+          node.y = currentY;
+        });
+
+        currentY += VERTICAL_GAP;
+      }
+
+      // Add extra gap between depth levels
+      if (numRows > 0 && d < maxDepth) {
+        currentY += VERTICAL_GAP / 2;
+      }
+    }
+
+    // Center the entire graph (find bounds and shift)
+    let minX = Infinity, maxX = -Infinity;
+    nodes.forEach(n => {
+      minX = Math.min(minX, n.x);
+      maxX = Math.max(maxX, n.x);
+    });
+    const offsetX = -minX + HORIZONTAL_GAP / 2;
+    nodes.forEach(n => { n.x += offsetX; });
+
+    // Create dagreGraph for edge routing if dagre is available
+    if (typeof dagre !== 'undefined') {
+      dagreGraph = new dagre.graphlib.Graph();
+      dagreGraph.setGraph({ rankdir: 'TB' });
+      dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+      nodes.forEach(node => {
+        dagreGraph.setNode(node.id, {
+          x: node.x,
+          y: node.y,
+          width: getNodeWidth(node),
+          height: 40
+        });
+      });
+    }
+
+    // Fit the view
+    fitToView();
+  }
+
+  function fitToView() {
+    if (nodes.length === 0) return;
+
     const width = svg.clientWidth || 800;
     const height = svg.clientHeight || 600;
-    const nodeWidth = 120;
-    const nodeHeight = 50;
-    const horizontalGap = 60;
-    const verticalGap = 80;
+    const padding = 40;
 
-    // Build adjacency for hierarchy
-    const children = new Map();
-    const parents = new Map();
+    // Calculate bounding box of all nodes
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
 
-    nodes.forEach(n => {
-      children.set(n.id, []);
-      parents.set(n.id, []);
-    });
-
-    graphData.edges.forEach(edge => {
-      if (edge.mechanism === 'props') {
-        const c = children.get(edge.from) || [];
-        c.push(edge.to);
-        children.set(edge.from, c);
-
-        const p = parents.get(edge.to) || [];
-        p.push(edge.from);
-        parents.set(edge.to, p);
-      }
-    });
-
-    // Find root nodes (no parents or context providers)
-    const roots = nodes.filter(n => {
-      const p = parents.get(n.id) || [];
-      return p.length === 0 || n.data.contextProviders.length > 0;
-    });
-
-    // If no clear roots, pick nodes with most outgoing edges
-    if (roots.length === 0) {
-      const sorted = [...nodes].sort((a, b) => {
-        const aOut = (children.get(a.id) || []).length;
-        const bOut = (children.get(b.id) || []).length;
-        return bOut - aOut;
-      });
-      roots.push(sorted[0]);
-    }
-
-    // Assign levels using BFS
-    const levels = new Map();
-    const visited = new Set();
-    let maxLevel = 0;
-
-    roots.forEach(root => {
-      if (!visited.has(root.id)) {
-        const queue = [{ node: root, level: 0 }];
-        while (queue.length > 0) {
-          const { node, level } = queue.shift();
-          if (visited.has(node.id)) continue;
-          visited.add(node.id);
-          levels.set(node.id, level);
-          maxLevel = Math.max(maxLevel, level);
-
-          const childIds = children.get(node.id) || [];
-          childIds.forEach(childId => {
-            const childNode = nodes.find(n => n.id === childId);
-            if (childNode && !visited.has(childId)) {
-              queue.push({ node: childNode, level: level + 1 });
-            }
-          });
-        }
-      }
-    });
-
-    // Assign levels to unvisited nodes
     nodes.forEach(node => {
-      if (!levels.has(node.id)) {
-        maxLevel++;
-        levels.set(node.id, maxLevel);
-      }
+      const nodeW = getNodeWidth(node);
+      const nodeH = 32;
+      minX = Math.min(minX, node.x - nodeW / 2);
+      maxX = Math.max(maxX, node.x + nodeW / 2);
+      minY = Math.min(minY, node.y - nodeH / 2);
+      maxY = Math.max(maxY, node.y + nodeH / 2);
     });
 
-    // Group nodes by level
-    const levelGroups = new Map();
-    nodes.forEach(node => {
-      const level = levels.get(node.id) || 0;
-      const group = levelGroups.get(level) || [];
-      group.push(node);
-      levelGroups.set(level, group);
-    });
+    const graphWidth = maxX - minX;
+    const graphHeight = maxY - minY;
 
-    // Position nodes
-    const totalLevels = maxLevel + 1;
-    const startY = 80;
+    // For small graphs (< 50 nodes), try to fit in view
+    // For large graphs, start at scale 1.0 and let users zoom out
+    if (nodes.length < 50) {
+      const availableWidth = width - padding * 2;
+      const availableHeight = height - padding * 2;
+      const scaleX = availableWidth / graphWidth;
+      const scaleY = availableHeight / graphHeight;
+      let scale = Math.min(scaleX, scaleY, 1.0);
 
-    levelGroups.forEach((group, level) => {
-      const y = startY + level * (nodeHeight + verticalGap);
-      const totalWidth = group.length * nodeWidth + (group.length - 1) * horizontalGap;
-      const startX = (width - totalWidth) / 2 + nodeWidth / 2;
+      const graphCenterX = (minX + maxX) / 2;
+      const graphCenterY = (minY + maxY) / 2;
+      const viewCenterX = width / 2;
+      const viewCenterY = height / 2;
 
-      group.forEach((node, i) => {
-        node.x = startX + i * (nodeWidth + horizontalGap);
-        node.y = y;
-      });
-    });
-
-    // Run a few iterations to reduce edge crossings
-    for (let iter = 0; iter < 50; iter++) {
-      // Push overlapping nodes apart horizontally
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i];
-          const b = nodes[j];
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const minDist = nodeWidth + 20;
-
-          if (dist < minDist && dist > 0) {
-            const push = (minDist - dist) / 2;
-            const px = (dx / dist) * push;
-            const py = (dy / dist) * push * 0.3; // Less vertical push
-            a.x -= px;
-            b.x += px;
-            a.y -= py;
-            b.y += py;
-          }
-        }
-      }
-
-      // Keep nodes on screen
-      nodes.forEach(node => {
-        node.x = Math.max(80, Math.min(width - 80, node.x));
-        node.y = Math.max(60, Math.min(height - 60, node.y));
-      });
+      transform.scale = scale;
+      transform.x = viewCenterX - graphCenterX * scale;
+      transform.y = viewCenterY - graphCenterY * scale;
+    } else {
+      // Large graph: start at scale 1.0, positioned at top-left
+      transform.scale = 1.0;
+      transform.x = padding - minX;
+      transform.y = padding - minY;
     }
-
-    transform.x = 0;
-    transform.y = 0;
-    transform.scale = 1;
   }
 
   function render() {
@@ -590,31 +732,41 @@ function getScript(): string {
     const container = document.querySelector('.canvas-container');
     container.innerHTML = \`
       <div class="empty-state">
-        <h2>No components found</h2>
-        <p>Make sure you're analyzing a React project with .tsx or .jsx files</p>
+        <h2>No React components found</h2>
+        <p>Make sure your workspace contains .tsx or .jsx files with React components</p>
       </div>
     \`;
   }
 
   function renderFlowView(g) {
-    // Draw edges
-    graphData.edges.forEach(edge => {
-      const source = nodes.find(n => n.id === edge.from);
-      const target = nodes.find(n => n.id === edge.to);
-      if (source && target) {
-        drawEdge(g, source, target, edge);
-      }
-    });
+    // Draw edges first (behind nodes)
+    try {
+      graphData.edges.forEach(edge => {
+        const source = nodes.find(n => n.id === edge.from);
+        const target = nodes.find(n => n.id === edge.to);
+        if (source && target) {
+          drawEdge(g, source, target, edge);
+        }
+      });
+    } catch (e) {
+      console.error('Error drawing edges:', e);
+    }
 
-    // Draw nodes
-    nodes.forEach(node => {
-      drawNode(g, node);
-    });
+    // Always draw nodes
+    nodes.forEach(node => drawNode(g, node));
   }
 
   function renderContextView(g) {
-    // Draw context boundaries with increasing padding to avoid overlap
     const total = graphData.contextBoundaries.length;
+
+    // Helper to normalize context names for matching
+    function normalizeContextName(name) {
+      return name.toLowerCase()
+        .replace(/context$/i, '')
+        .replace(/provider$/i, '')
+        .replace(/consumer$/i, '');
+    }
+
     graphData.contextBoundaries.forEach((boundary, index) => {
       const provider = nodes.find(n => n.id === boundary.providerComponent);
 
@@ -623,92 +775,194 @@ function getScript(): string {
         .map(id => nodes.find(n => n.id === id))
         .filter(n => n !== undefined);
 
-      // Debug: log if we can't find consumers
-      if (boundary.childComponents.length !== consumers.length) {
-        console.log('Context boundary mismatch:', boundary.contextName,
-          'expected', boundary.childComponents.length,
-          'found', consumers.length);
-      }
-
-      // Draw boundary if we have provider (even with no consumers found by ID)
+      // Draw boundary if we have provider
       if (provider) {
-        // Include ALL nodes that consume this context by checking their data
-        const contextConsumers = nodes.filter(n =>
-          n.data.contextConsumers &&
-          n.data.contextConsumers.includes(boundary.contextName)
-        );
+        const normalizedBoundaryName = normalizeContextName(boundary.contextName);
+
+        // Include ALL nodes that consume this context
+        const contextConsumers = nodes.filter(n => {
+          if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
+
+          return n.data.contextConsumers.some(consumerContext => {
+            const normalizedConsumer = normalizeContextName(consumerContext);
+            return consumerContext === boundary.contextName ||
+                   normalizedConsumer === normalizedBoundaryName ||
+                   normalizedConsumer.includes(normalizedBoundaryName) ||
+                   normalizedBoundaryName.includes(normalizedConsumer);
+          });
+        });
 
         const allConsumers = [...new Set([...consumers, ...contextConsumers])];
-
-        if (allConsumers.length > 0) {
-          drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
-        }
+        drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
       }
     });
 
-    // Draw edges (only context)
     graphData.edges
       .filter(e => e.mechanism === 'context')
       .forEach(edge => {
         const source = nodes.find(n => n.id === edge.from);
         const target = nodes.find(n => n.id === edge.to);
-        if (source && target) {
-          drawEdge(g, source, target, edge);
-        }
+        if (source && target) drawEdge(g, source, target, edge);
       });
 
-    // Draw nodes
+    // Draw nodes with purple border for providers
     nodes.forEach(node => {
-      drawNode(g, node);
+      const isProvider = node.data.contextProviders && node.data.contextProviders.length > 0;
+      drawNode(g, node, isProvider ? '#8957e5' : null);
     });
   }
 
   function renderDrillingView(g) {
     if (graphData.propDrillingPaths.length === 0) {
-      // Draw all nodes but show message
-      nodes.forEach(node => drawNode(g, node));
-
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       text.setAttribute('x', svg.clientWidth / 2);
-      text.setAttribute('y', 50);
+      text.setAttribute('y', svg.clientHeight / 2);
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('fill', '#3fb950');
       text.setAttribute('font-size', '16');
-      text.textContent = '✓ No prop drilling detected';
+      text.textContent = '\\u2713 No prop drilling detected';
       g.appendChild(text);
       return;
     }
 
-    // Highlight drilling paths
-    graphData.propDrillingPaths.forEach(path => {
-      for (let i = 0; i < path.path.length - 1; i++) {
-        const sourceName = path.path[i];
-        const targetName = path.path[i + 1];
-        const source = nodes.find(n => n.name === sourceName);
-        const target = nodes.find(n => n.name === targetName);
-        if (source && target) {
-          drawDrillingEdge(g, source, target);
+    // Layout drilling paths as vertical chains, side by side
+    const VERTICAL_GAP = 70;
+    const HORIZONTAL_GAP = 250;
+    const START_X = 150;
+    const START_Y = 80;
+
+    // Add arrow marker for drilling
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = \`
+      <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="#f85149" />
+      </marker>
+    \`;
+    g.appendChild(defs);
+
+    graphData.propDrillingPaths.forEach((drillingPath, pathIndex) => {
+      const chainX = START_X + pathIndex * HORIZONTAL_GAP;
+
+      // Draw path label (state name being drilled)
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', chainX);
+      label.setAttribute('y', START_Y - 40);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('fill', '#f85149');
+      label.setAttribute('font-size', '13');
+      label.setAttribute('font-weight', '600');
+      label.textContent = drillingPath.stateName + ' (' + drillingPath.hops + ' hops)';
+      g.appendChild(label);
+
+      // Create positioned nodes for this chain
+      const chainNodes = [];
+      drillingPath.path.forEach((componentName, index) => {
+        const originalNode = nodes.find(n => n.name === componentName);
+        if (originalNode) {
+          chainNodes.push({
+            ...originalNode,
+            x: chainX,
+            y: START_Y + index * VERTICAL_GAP,
+            isFirst: index === 0,
+            isLast: index === drillingPath.path.length - 1
+          });
         }
+      });
+
+      // Draw edges between chain nodes
+      for (let i = 0; i < chainNodes.length - 1; i++) {
+        const source = chainNodes[i];
+        const target = chainNodes[i + 1];
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const startY = source.y + 16;
+        const endY = target.y - 16;
+        const midY = (startY + endY) / 2;
+
+        path.setAttribute('d', \`M\${source.x},\${startY} C\${source.x},\${midY} \${target.x},\${midY} \${target.x},\${endY}\`);
+        path.setAttribute('class', 'edge edge-drilling');
+        path.setAttribute('marker-end', 'url(#arrow-red)');
+        g.appendChild(path);
       }
+
+      // Draw nodes
+      chainNodes.forEach(node => {
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'node');
+        group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
+
+        const width = getNodeWidth(node);
+        const height = 32;
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', -width / 2);
+        rect.setAttribute('y', -height / 2);
+        rect.setAttribute('width', width);
+        rect.setAttribute('height', height);
+        rect.setAttribute('rx', 4);
+
+        // First node (origin) is blue, last (consumer) is green, middle (pass-through) is orange
+        let fillColor;
+        if (node.isFirst) {
+          fillColor = '#1f6feb'; // Blue - origin/defines state
+        } else if (node.isLast) {
+          fillColor = '#238636'; // Green - actually uses it
+        } else {
+          fillColor = '#d29922'; // Orange/yellow - pass-through
+        }
+        rect.setAttribute('fill', fillColor);
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('class', 'node-label');
+        text.textContent = node.name;
+
+        group.appendChild(rect);
+        group.appendChild(text);
+
+        group.addEventListener('click', () => showNodeDetails(node));
+
+        g.appendChild(group);
+      });
     });
 
-    nodes.forEach(node => drawNode(g, node));
+    // Update transform to fit drilling view
+    const numPaths = graphData.propDrillingPaths.length;
+    const maxPathLength = Math.max(...graphData.propDrillingPaths.map(p => p.path.length));
+    const totalWidth = numPaths * HORIZONTAL_GAP;
+    const totalHeight = maxPathLength * VERTICAL_GAP + 100;
+
+    const width = svg.clientWidth || 800;
+    const height = svg.clientHeight || 600;
+    const scaleX = (width - 80) / totalWidth;
+    const scaleY = (height - 80) / totalHeight;
+    const scale = Math.min(scaleX, scaleY, 1.0);
+
+    transform.scale = scale;
+    transform.x = (width - totalWidth * scale) / 2;
+    transform.y = 40;
   }
 
-  function drawNode(g, node) {
+  function drawNode(g, node, borderColor) {
     const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     group.setAttribute('class', 'node');
     group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
 
+    const width = getNodeWidth(node);
+    const height = 32;
+
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    const width = Math.max(80, node.name.length * 8 + 20);
-    const height = 36;
     rect.setAttribute('x', -width / 2);
     rect.setAttribute('y', -height / 2);
     rect.setAttribute('width', width);
     rect.setAttribute('height', height);
-    rect.setAttribute('rx', 6);
-    rect.setAttribute('class', node.hasState ? 'node-component-state' : 'node-component');
+    rect.setAttribute('rx', 4);
+    rect.setAttribute('class', \`node-rect \${node.hasState ? 'node-component-state' : 'node-component'}\`);
+
+    // Add border for context providers
+    if (borderColor) {
+      rect.setAttribute('stroke', borderColor);
+      rect.setAttribute('stroke-width', '3');
+    }
 
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('class', 'node-label');
@@ -738,42 +992,57 @@ function getScript(): string {
     }
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const nodeHeight = 18;
-
-    // Calculate edge points from node edges, not centers
-    const dx = target.x - source.x;
-    const dy = target.y - source.y;
-
-    let startX = source.x;
-    let startY = source.y + nodeHeight; // Bottom of source
-    let endX = target.x;
-    let endY = target.y - nodeHeight; // Top of target
-
-    // If target is above source, flip
-    if (dy < 0) {
-      startY = source.y - nodeHeight;
-      endY = target.y + nodeHeight;
-    }
-
-    // If mostly horizontal, use sides
-    if (Math.abs(dx) > Math.abs(dy) * 2) {
-      startY = source.y;
-      endY = target.y;
-      startX = source.x + (dx > 0 ? 50 : -50);
-      endX = target.x + (dx > 0 ? -50 : 50);
-    }
-
-    // Create smooth bezier curve
-    const midX = (startX + endX) / 2;
-    const midY = (startY + endY) / 2;
-    const curvature = Math.min(30, Math.abs(dx) * 0.2);
+    const nodeHeight = 20;
+    const sourceWidth = getNodeWidth(source) / 2;
+    const targetWidth = getNodeWidth(target) / 2;
 
     let d;
-    if (Math.abs(dx) < 20) {
-      // Nearly vertical - straight line
-      d = \`M\${startX},\${startY} L\${endX},\${endY}\`;
-    } else {
-      // Curved path
+
+    // Try to use dagre's calculated edge path if available
+    if (dagreGraph) {
+      const dagreEdge = dagreGraph.edge(source.id, target.id);
+      if (dagreEdge && dagreEdge.points && dagreEdge.points.length > 0) {
+        const points = dagreEdge.points;
+        d = 'M' + points[0].x + ',' + points[0].y;
+
+        if (points.length === 2) {
+          d += ' L' + points[1].x + ',' + points[1].y;
+        } else if (points.length >= 3) {
+          for (let i = 1; i < points.length - 1; i++) {
+            const p0 = points[i - 1];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            d += ' Q' + p1.x + ',' + p1.y + ' ' +
+              ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
+          }
+          d += ' L' + points[points.length - 1].x + ',' + points[points.length - 1].y;
+        }
+      }
+    }
+
+    // Fallback if dagre path not available
+    if (!d) {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+
+      let startX = source.x;
+      let startY = source.y + nodeHeight;
+      let endX = target.x;
+      let endY = target.y - nodeHeight;
+
+      if (dy < 0) {
+        startY = source.y - nodeHeight;
+        endY = target.y + nodeHeight;
+      }
+
+      if (Math.abs(dx) > Math.abs(dy) * 2) {
+        startY = source.y;
+        endY = target.y;
+        startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
+        endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
+      }
+
+      const midY = (startY + endY) / 2;
       d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
     }
 
@@ -785,14 +1054,25 @@ function getScript(): string {
   }
 
   function drawContextBoundary(g, provider, consumers, name, index, total) {
-    const allNodes = [provider, ...consumers];
-    const basePadding = 50;
-    const offset = (total - 1 - index) * 30; // Outer contexts have more padding
+    const allNodes = [provider, ...consumers].filter(n => n !== undefined);
+    if (allNodes.length === 0) return;
 
-    const minX = Math.min(...allNodes.map(n => n.x)) - basePadding - offset;
-    const minY = Math.min(...allNodes.map(n => n.y)) - basePadding - offset;
-    const maxX = Math.max(...allNodes.map(n => n.x)) + basePadding + offset;
-    const maxY = Math.max(...allNodes.map(n => n.y)) + basePadding + offset;
+    const basePadding = 50;
+    const offset = (total - 1 - index) * 30;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    allNodes.forEach(n => {
+      const nodeWidth = getNodeWidth(n);
+      minX = Math.min(minX, n.x - nodeWidth / 2);
+      maxX = Math.max(maxX, n.x + nodeWidth / 2);
+      minY = Math.min(minY, n.y - 20);
+      maxY = Math.max(maxY, n.y + 20);
+    });
+
+    minX = minX - basePadding - offset;
+    minY = minY - basePadding - offset;
+    maxX = maxX + basePadding + offset;
+    maxY = maxY + basePadding + offset;
 
     const rectX = minX - 30;
     const rectY = minY - 25;
@@ -806,7 +1086,6 @@ function getScript(): string {
     rect.setAttribute('height', rectHeight);
     rect.setAttribute('class', 'context-boundary');
 
-    // Position label at top-left corner of its own boundary
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', rectX + 10);
     label.setAttribute('y', rectY + 16);
@@ -815,7 +1094,6 @@ function getScript(): string {
     label.setAttribute('font-weight', '500');
     label.textContent = name + '.Provider';
 
-    // Add background for label readability
     const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     const labelWidth = name.length * 7 + 60;
     labelBg.setAttribute('x', rectX + 6);
@@ -830,29 +1108,15 @@ function getScript(): string {
     g.insertBefore(rect, g.firstChild);
   }
 
-  function drawDrillingEdge(g, source, target) {
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line.setAttribute('x1', source.x);
-    line.setAttribute('y1', source.y);
-    line.setAttribute('x2', target.x);
-    line.setAttribute('y2', target.y);
-    line.setAttribute('class', 'drilling-path');
-    g.insertBefore(line, g.firstChild);
-  }
-
   function showNodeDetails(node) {
     const comp = node.data;
-    const incoming = graphData.edges.filter(e => e.to === node.id);
-    const outgoing = graphData.edges.filter(e => e.from === node.id);
+    const fileName = comp.filePath.split('/').pop();
 
     let html = \`
       <div class="sidebar-content">
         <div class="sidebar-section">
           <h3>\${comp.name}</h3>
-          <div class="detail-row">
-            <span class="detail-label">File</span>
-            <span class="detail-value">\${comp.filePath.split('/').pop()}:\${comp.line}</span>
-          </div>
+          <div class="file-link">\${fileName}:\${comp.line}</div>
         </div>
     \`;
 
@@ -860,7 +1124,10 @@ function getScript(): string {
       html += \`
         <div class="sidebar-section">
           <h3>State Defined</h3>
-          \${comp.stateProvided.map(s => \`<span class="tag tag-state">\${s.name} (\${s.type})</span>\`).join('')}
+          \${comp.stateProvided.map(s => \`
+            <span class="tag tag-state">\${s.name}</span>
+            <span style="font-size:10px;color:#8b949e">(\${s.type})</span>
+          \`).join('')}
         </div>
       \`;
     }
@@ -868,7 +1135,7 @@ function getScript(): string {
     if (comp.contextProviders.length > 0) {
       html += \`
         <div class="sidebar-section">
-          <h3>Context Providers</h3>
+          <h3>Provides Context</h3>
           \${comp.contextProviders.map(c => \`<span class="tag tag-context">\${c.contextName}</span>\`).join('')}
         </div>
       \`;
@@ -877,7 +1144,7 @@ function getScript(): string {
     if (comp.contextConsumers.length > 0) {
       html += \`
         <div class="sidebar-section">
-          <h3>Context Consumers</h3>
+          <h3>Consumes Context</h3>
           \${comp.contextConsumers.map(c => \`<span class="tag tag-context">\${c}</span>\`).join('')}
         </div>
       \`;
@@ -892,15 +1159,18 @@ function getScript(): string {
       \`;
     }
 
+    const incoming = graphData.edges.filter(e => e.to === node.id);
+    const outgoing = graphData.edges.filter(e => e.from === node.id);
+
     if (incoming.length > 0) {
       html += \`
         <div class="sidebar-section">
-          <h3>Incoming State</h3>
+          <h3>Receives From</h3>
           \${incoming.map(e => {
             const from = graphData.components[e.from];
             return \`<div class="detail-row">
-              <span class="detail-label">\${e.mechanism}\${e.propName ? ' (' + e.propName + ')' : ''}</span>
-              <span class="detail-value">from \${from?.name || 'Unknown'}</span>
+              <span class="detail-label">\${from?.name || 'Unknown'}</span>
+              <span class="detail-value">\${e.mechanism}\${e.propName ? ' (' + e.propName + ')' : ''}</span>
             </div>\`;
           }).join('')}
         </div>
@@ -910,12 +1180,12 @@ function getScript(): string {
     if (outgoing.length > 0) {
       html += \`
         <div class="sidebar-section">
-          <h3>Outgoing State</h3>
+          <h3>Passes To</h3>
           \${outgoing.map(e => {
             const to = graphData.components[e.to];
             return \`<div class="detail-row">
-              <span class="detail-label">\${e.mechanism}\${e.propName ? ' (' + e.propName + ')' : ''}</span>
-              <span class="detail-value">to \${to?.name || 'Unknown'}</span>
+              <span class="detail-label">\${to?.name || 'Unknown'}</span>
+              <span class="detail-value">\${e.mechanism}\${e.propName ? ' (' + e.propName + ')' : ''}</span>
             </div>\`;
           }).join('')}
         </div>
@@ -927,40 +1197,79 @@ function getScript(): string {
   }
 
   function updateStats() {
-    const componentCount = Object.keys(graphData.components).length;
-    const stateCount = Object.keys(graphData.stateNodes).length;
-    const edgeCount = graphData.edges.length;
+    const drillingCount = graphData.propDrillingPaths.length;
+    let drillingBadge = '';
+    if (drillingCount > 0) {
+      drillingBadge = \`<span class="warning-badge">\${drillingCount} drilling</span>\`;
+    }
 
     statsEl.innerHTML = \`
-      <span>📦 \${componentCount} components</span>
-      <span>🔗 \${stateCount} state nodes</span>
-      <span>➡️ \${edgeCount} edges</span>
+      <span>\${summaryData.components.totalComponents} components</span>
+      <span>\${summaryData.state.totalStateNodes} state</span>
+      <span>\${summaryData.flow.totalEdges} edges</span>
+      \${drillingBadge}
     \`;
   }
 
   function updateLegend() {
-    legendEl.innerHTML = \`
-      <div class="legend-item">
-        <div class="legend-color" style="background: #238636"></div>
-        <span>Component</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #1f6feb"></div>
-        <span>Component with State</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #3fb950"></div>
-        <span>Props Flow</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #8957e5"></div>
-        <span>Context Flow</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #f85149"></div>
-        <span>Prop Drilling</span>
-      </div>
-    \`;
+    if (currentView === 'drilling' && graphData.propDrillingPaths.length > 0) {
+      legendEl.innerHTML = \`
+        <div class="legend-item">
+          <div class="legend-color" style="background: #1f6feb"></div>
+          <span>Defines State</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #d29922"></div>
+          <span>Pass-through</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #238636"></div>
+          <span>Uses State</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #f85149"></div>
+          <span>Drilling Path</span>
+        </div>
+      \`;
+    } else if (currentView === 'context') {
+      legendEl.innerHTML = \`
+        <div class="legend-item">
+          <div class="legend-color" style="background: #238636"></div>
+          <span>Component</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #1f6feb"></div>
+          <span>Has State</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #8957e5; border: 2px solid #8957e5;"></div>
+          <span>Context Provider</span>
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="#8957e5" stroke-width="2" stroke-dasharray="4,2"/></svg>
+          <span>Context Flow</span>
+        </div>
+      \`;
+    } else {
+      legendEl.innerHTML = \`
+        <div class="legend-item">
+          <div class="legend-color" style="background: #238636"></div>
+          <span>Component</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #1f6feb"></div>
+          <span>Has State</span>
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="#3fb950" stroke-width="2"/><polygon points="16,3 20,6 16,9" fill="#3fb950"/></svg>
+          <span>Props</span>
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="#8957e5" stroke-width="2" stroke-dasharray="4,2"/></svg>
+          <span>Context</span>
+        </div>
+      \`;
+    }
   }
 })();
   `;

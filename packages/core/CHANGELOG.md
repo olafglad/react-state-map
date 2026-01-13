@@ -2,6 +2,12 @@
 
 All notable changes to @react-state-map/core will be documented in this file.
 
+## [0.1.4] - 2025-01-13
+
+### Changed
+- Version bump to stay in sync with CLI and VS Code extension releases
+- No functional changes to core parsing logic
+
 ## [0.1.3] - 2025-01-07
 
 ### Changed

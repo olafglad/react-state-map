@@ -2,6 +2,24 @@
 
 All notable changes to React State Map will be documented in this file.
 
+## [0.1.4] - 2025-01-13
+
+### Added
+- **Improved Drilling View**: Completely redesigned prop drilling visualization
+  - Shows only components involved in drilling paths as clean vertical chains
+  - Color-coded nodes: Blue (defines state), Orange (pass-through), Green (uses state)
+  - Displays state name and hop count above each drilling chain
+  - Multiple drilling paths displayed side by side
+- **Dynamic Legends**: Each view now has its own tailored legend
+  - State Flow: Shows arrow types (Props, Context)
+  - Context: Shows Context Provider indicator and Context Flow arrows
+  - Drilling: Shows role colors (Defines State, Pass-through, Uses State)
+- **Context Provider Highlighting**: Provider nodes now have purple border in Context view
+
+### Changed
+- CLI and VS Code extension now share identical rendering logic
+- Synced hierarchical layout algorithm between CLI and VS Code
+
 ## [0.1.3] - 2025-01-07
 
 ### Fixed

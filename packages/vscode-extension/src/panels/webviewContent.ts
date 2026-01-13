@@ -410,6 +410,7 @@ function getScript(): string {
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         currentView = tab.dataset.view;
+        updateLegend();
         render();
       });
     });
@@ -850,44 +851,144 @@ function getScript(): string {
         if (source && target) drawEdge(g, source, target, edge);
       });
 
-    nodes.forEach(node => drawNode(g, node));
+    // Draw nodes with purple border for providers
+    nodes.forEach(node => {
+      const isProvider = node.data.contextProviders && node.data.contextProviders.length > 0;
+      drawNode(g, node, isProvider ? 'var(--vscode-charts-purple)' : null);
+    });
   }
 
   function renderDrillingView(g) {
     if (graphData.propDrillingPaths.length === 0) {
-      nodes.forEach(node => drawNode(g, node));
-
       const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       text.setAttribute('x', svg.clientWidth / 2);
-      text.setAttribute('y', 40);
+      text.setAttribute('y', svg.clientHeight / 2);
       text.setAttribute('text-anchor', 'middle');
       text.setAttribute('fill', 'var(--vscode-charts-green)');
-      text.setAttribute('font-size', '14');
-      text.textContent = '✓ No prop drilling detected';
+      text.setAttribute('font-size', '16');
+      text.textContent = '\\u2713 No prop drilling detected';
       g.appendChild(text);
       return;
     }
 
-    graphData.propDrillingPaths.forEach(path => {
-      for (let i = 0; i < path.path.length - 1; i++) {
-        const source = nodes.find(n => n.name === path.path[i]);
-        const target = nodes.find(n => n.name === path.path[i + 1]);
-        if (source && target) {
-          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-          line.setAttribute('x1', source.x);
-          line.setAttribute('y1', source.y);
-          line.setAttribute('x2', target.x);
-          line.setAttribute('y2', target.y);
-          line.setAttribute('class', 'edge edge-drilling');
-          g.appendChild(line);
+    // Layout drilling paths as vertical chains, side by side
+    const VERTICAL_GAP = 70;
+    const HORIZONTAL_GAP = 250;
+    const START_X = 150;
+    const START_Y = 80;
+
+    // Add arrow marker for drilling
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = \`
+      <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="var(--vscode-charts-red)" />
+      </marker>
+    \`;
+    g.appendChild(defs);
+
+    graphData.propDrillingPaths.forEach((drillingPath, pathIndex) => {
+      const chainX = START_X + pathIndex * HORIZONTAL_GAP;
+
+      // Draw path label (state name being drilled)
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', chainX);
+      label.setAttribute('y', START_Y - 40);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('fill', 'var(--vscode-charts-red)');
+      label.setAttribute('font-size', '13');
+      label.setAttribute('font-weight', '600');
+      label.textContent = drillingPath.stateName + ' (' + drillingPath.hops + ' hops)';
+      g.appendChild(label);
+
+      // Create positioned nodes for this chain
+      const chainNodes = [];
+      drillingPath.path.forEach((componentName, index) => {
+        const originalNode = nodes.find(n => n.name === componentName);
+        if (originalNode) {
+          chainNodes.push({
+            ...originalNode,
+            x: chainX,
+            y: START_Y + index * VERTICAL_GAP,
+            isFirst: index === 0,
+            isLast: index === drillingPath.path.length - 1
+          });
         }
+      });
+
+      // Draw edges between chain nodes
+      for (let i = 0; i < chainNodes.length - 1; i++) {
+        const source = chainNodes[i];
+        const target = chainNodes[i + 1];
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const startY = source.y + 16;
+        const endY = target.y - 16;
+        const midY = (startY + endY) / 2;
+
+        path.setAttribute('d', \`M\${source.x},\${startY} C\${source.x},\${midY} \${target.x},\${midY} \${target.x},\${endY}\`);
+        path.setAttribute('class', 'edge edge-drilling');
+        path.setAttribute('marker-end', 'url(#arrow-red)');
+        g.appendChild(path);
       }
+
+      // Draw nodes
+      chainNodes.forEach(node => {
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'node');
+        group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
+
+        const width = getNodeWidth(node);
+        const height = 32;
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', -width / 2);
+        rect.setAttribute('y', -height / 2);
+        rect.setAttribute('width', width);
+        rect.setAttribute('height', height);
+        rect.setAttribute('rx', 4);
+
+        // First node (origin) is blue, last (consumer) is green, middle (pass-through) is orange
+        let fillColor;
+        if (node.isFirst) {
+          fillColor = 'var(--vscode-charts-blue)'; // Blue - origin/defines state
+        } else if (node.isLast) {
+          fillColor = 'var(--vscode-charts-green)'; // Green - actually uses it
+        } else {
+          fillColor = 'var(--vscode-charts-yellow)'; // Yellow/orange - pass-through
+        }
+        rect.setAttribute('fill', fillColor);
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('class', 'node-label');
+        text.textContent = node.name;
+
+        group.appendChild(rect);
+        group.appendChild(text);
+
+        group.addEventListener('click', () => showNodeDetails(node));
+
+        g.appendChild(group);
+      });
     });
 
-    nodes.forEach(node => drawNode(g, node));
+    // Update transform to fit drilling view
+    const numPaths = graphData.propDrillingPaths.length;
+    const maxPathLength = Math.max(...graphData.propDrillingPaths.map(p => p.path.length));
+    const totalWidth = numPaths * HORIZONTAL_GAP;
+    const totalHeight = maxPathLength * VERTICAL_GAP + 100;
+
+    const width = svg.clientWidth || 800;
+    const height = svg.clientHeight || 600;
+    const scaleX = (width - 80) / totalWidth;
+    const scaleY = (height - 80) / totalHeight;
+    const scale = Math.min(scaleX, scaleY, 1.0);
+
+    transform.scale = scale;
+    transform.x = (width - totalWidth * scale) / 2;
+    transform.y = 40;
   }
 
-  function drawNode(g, node) {
+  function drawNode(g, node, borderColor) {
     const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     group.setAttribute('class', 'node');
     group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
@@ -902,6 +1003,12 @@ function getScript(): string {
     rect.setAttribute('height', height);
     rect.setAttribute('rx', 4);
     rect.setAttribute('class', \`node-rect \${node.hasState ? 'node-component-state' : 'node-component'}\`);
+
+    // Add border for context providers
+    if (borderColor) {
+      rect.setAttribute('stroke', borderColor);
+      rect.setAttribute('stroke-width', '3');
+    }
 
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('class', 'node-label');
@@ -1178,24 +1285,64 @@ function getScript(): string {
   }
 
   function updateLegend() {
-    legendEl.innerHTML = \`
-      <div class="legend-item">
-        <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
-        <span>Component</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
-        <span>Has State</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: var(--vscode-charts-purple)"></div>
-        <span>Context</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: var(--vscode-charts-red)"></div>
-        <span>Drilling</span>
-      </div>
-    \`;
+    if (currentView === 'drilling' && graphData.propDrillingPaths.length > 0) {
+      legendEl.innerHTML = \`
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
+          <span>Defines State</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-yellow)"></div>
+          <span>Pass-through</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
+          <span>Uses State</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-red)"></div>
+          <span>Drilling Path</span>
+        </div>
+      \`;
+    } else if (currentView === 'context') {
+      legendEl.innerHTML = \`
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
+          <span>Component</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
+          <span>Has State</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-purple); border: 2px solid var(--vscode-charts-purple);"></div>
+          <span>Context Provider</span>
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="var(--vscode-charts-purple)" stroke-width="2" stroke-dasharray="4,2"/></svg>
+          <span>Context Flow</span>
+        </div>
+      \`;
+    } else {
+      legendEl.innerHTML = \`
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
+          <span>Component</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
+          <span>Has State</span>
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="var(--vscode-charts-green)" stroke-width="2"/><polygon points="16,3 20,6 16,9" fill="var(--vscode-charts-green)"/></svg>
+          <span>Props</span>
+        </div>
+        <div class="legend-item">
+          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="var(--vscode-charts-purple)" stroke-width="2" stroke-dasharray="4,2"/></svg>
+          <span>Context</span>
+        </div>
+      \`;
+    }
   }
 })();
   `;
