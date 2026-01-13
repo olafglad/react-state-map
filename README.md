@@ -9,8 +9,10 @@ React State Map analyzes your codebase and generates interactive diagrams showin
 ## Features
 
 - **State Flow Visualization**: See which components own state and how it propagates through props
-- **Context Boundaries**: Visualize React Context providers and their scope
+- **Context Boundaries**: Visualize React Context providers with clustered consumers
 - **Prop Drilling Detection**: Automatically detect props passed through too many layers
+- **Directory Clustering**: Components automatically grouped by directory structure
+- **Collapsible Subtrees**: Collapse component subtrees to reduce visual complexity
 - **Click-to-Navigate**: Click any component to jump to its source code
 - **Multiple State Libraries**: Supports useState, useReducer, useContext, Redux, Zustand, and custom hooks
 
@@ -58,6 +60,10 @@ npx @react-state-map/cli ./src
 | Green nodes | Stateless components |
 | Green arrows | Props flow |
 | Purple dashed arrows | Context flow |
+| Purple boundaries | Context provider scope |
+| Gray dashed boundaries | Directory clusters |
+| ▼/▶ indicators | Expandable/collapsible nodes |
+| +N badge | Number of hidden children |
 | Red highlights | Prop drilling paths |
 
 ## Use Cases

@@ -72,7 +72,9 @@ react-state-map ./src --include "**/*.tsx" --exclude "**/test/**"
 ### Visualization Features
 
 - **State Flow**: See which components own state and how it propagates
-- **Context Boundaries**: Visualize React Context providers and their scope
+- **Directory Clustering**: Components grouped by folder structure
+- **Context Boundaries**: Visualize React Context providers with clustered consumers
+- **Collapsible Subtrees**: Click to collapse/expand component subtrees
 - **Prop Drilling Detection**: Automatically detect props passed through too many layers
 
 ## Output
@@ -85,9 +87,12 @@ Generates a standalone, interactive HTML file with:
 - **Green nodes** = Stateless components
 - **Green arrows** = Props flow
 - **Purple dashed arrows** = Context flow
+- **Gray dashed boundaries** = Directory clusters
+- **Purple boundaries** = Context provider scope
+- **▼/▶ indicators** = Collapsible nodes
 - **Red highlights** = Prop drilling paths
 
-Pan, zoom, click components for details, and switch between views.
+Pan, zoom, collapse/expand nodes, click components for details, and switch between views.
 
 ![State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
 

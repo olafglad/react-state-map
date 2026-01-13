@@ -269,6 +269,12 @@
       stroke-dasharray: 5, 5;
     }
 
+    .edge-props-subtle {
+      stroke: #30363d;
+      stroke-width: 1;
+      opacity: 0.5;
+    }
+
     .edge-drilling {
       stroke: #f85149;
       stroke-width: 3;
@@ -280,6 +286,26 @@
       stroke-width: 2;
       stroke-dasharray: 8, 4;
       rx: 8;
+    }
+
+    .collapse-indicator {
+      cursor: pointer;
+      user-select: none;
+      transition: fill 0.2s;
+    }
+
+    .collapse-indicator:hover {
+      fill: #c9d1d9 !important;
+    }
+
+    .cluster-boundary {
+      pointer-events: none;
+    }
+
+    .cluster-label {
+      font-family: inherit;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
     .empty-state {
@@ -359,6 +385,8 @@ const summaryData = {"components":{"totalComponents":6},"state":{"totalStateNode
   let dragStart = { x: 0, y: 0 };
   let nodes = [];
   let dagreGraph = null;
+  let collapsedNodes = new Set();
+  let currentClusters = new Map();
 
   init();
 
@@ -461,146 +489,275 @@ const summaryData = {"components":{"totalComponents":6},"state":{"totalStateNode
     return Math.max(100, node.name.length * 8 + 24);
   }
 
+  // Get descendants of a node for collapse functionality
+  function getDescendants(nodeId) {
+    const descendants = new Set();
+    const queue = [nodeId];
+    const visited = new Set();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (visited.has(current)) continue;
+      visited.add(current);
+
+      graphData.edges
+        .filter(e => e.from === current && e.mechanism === 'props')
+        .forEach(e => {
+          if (e.to !== nodeId) {
+            descendants.add(e.to);
+            queue.push(e.to);
+          }
+        });
+    }
+    return descendants;
+  }
+
+  // Get visible nodes (excluding collapsed descendants)
+  function getVisibleNodes() {
+    const hidden = new Set();
+    collapsedNodes.forEach(nodeId => {
+      getDescendants(nodeId).forEach(id => hidden.add(id));
+    });
+    return nodes.filter(n => !hidden.has(n.id));
+  }
+
+  // Check if node is hidden due to collapse
+  function isHiddenByCollapse(nodeId) {
+    for (const collapsedId of collapsedNodes) {
+      if (getDescendants(collapsedId).has(nodeId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Toggle collapse state for a node
+  function toggleCollapse(nodeId) {
+    if (collapsedNodes.has(nodeId)) {
+      collapsedNodes.delete(nodeId);
+    } else {
+      collapsedNodes.add(nodeId);
+    }
+    render();
+  }
+
+  // Basic dagre layout (used as default)
   function layoutNodes() {
     if (nodes.length === 0) return;
 
-    const nodeMap = {};
-    nodes.forEach(n => { nodeMap[n.id] = n; });
+    if (typeof dagre === 'undefined') {
+      // Fallback to simple layout if dagre not available
+      layoutNodesFallback();
+      return;
+    }
 
-    // Get max node width for spacing calculations
+    dagreGraph = new dagre.graphlib.Graph({ compound: true });
+    dagreGraph.setGraph({
+      rankdir: 'TB',
+      ranksep: 100,
+      nodesep: 60,
+      marginx: 40,
+      marginy: 40,
+      ranker: 'network-simplex'
+    });
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+    // Add nodes with dimensions
+    nodes.forEach(node => {
+      dagreGraph.setNode(node.id, {
+        label: node.name,
+        width: getNodeWidth(node),
+        height: 40
+      });
+    });
+
+    // Add edges for layout calculation
+    graphData.edges
+      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
+      .forEach(edge => {
+        if (dagreGraph.hasNode(edge.from) && dagreGraph.hasNode(edge.to)) {
+          dagreGraph.setEdge(edge.from, edge.to);
+        }
+      });
+
+    // Run dagre layout
+    dagre.layout(dagreGraph);
+
+    // Extract positions
+    nodes.forEach(node => {
+      const dagreNode = dagreGraph.node(node.id);
+      if (dagreNode) {
+        node.x = dagreNode.x;
+        node.y = dagreNode.y;
+      }
+    });
+
+    currentClusters = new Map();
+    fitToView();
+  }
+
+  // Fallback layout when dagre is not available
+  function layoutNodesFallback() {
     let maxNodeWidth = 0;
     nodes.forEach(n => {
       maxNodeWidth = Math.max(maxNodeWidth, getNodeWidth(n));
     });
 
-    // Spacing constants
     const HORIZONTAL_GAP = maxNodeWidth + 50;
     const VERTICAL_GAP = 80;
-
-    // Collect edges
-    const allEdges = graphData.edges.filter(e =>
-      e.mechanism === 'props' || e.mechanism === 'context'
-    );
-
-    // Build adjacency lists
-    const children = {};
-    const parents = {};
-    nodes.forEach(n => {
-      children[n.id] = [];
-      parents[n.id] = [];
-    });
-
-    allEdges.forEach(edge => {
-      if (children[edge.from] && parents[edge.to]) {
-        if (!children[edge.from].includes(edge.to)) {
-          children[edge.from].push(edge.to);
-        }
-        if (!parents[edge.to].includes(edge.from)) {
-          parents[edge.to].push(edge.from);
-        }
-      }
-    });
-
-    // Calculate depth using BFS
-    const depth = {};
-    nodes.forEach(n => { depth[n.id] = -1; });
-
-    // Find roots (nodes with no parents)
-    const roots = nodes.filter(n => parents[n.id].length === 0);
-
-    // BFS to assign depths
-    const queue = [];
-    roots.forEach(r => {
-      depth[r.id] = 0;
-      queue.push(r.id);
-    });
-
-    while (queue.length > 0) {
-      const nodeId = queue.shift();
-      const nodeDepth = depth[nodeId];
-      children[nodeId].forEach(childId => {
-        if (depth[childId] < nodeDepth + 1) {
-          depth[childId] = nodeDepth + 1;
-          queue.push(childId);
-        }
-      });
-    }
-
-    // Assign depth 0 to disconnected nodes
-    nodes.forEach(n => {
-      if (depth[n.id] === -1) depth[n.id] = 0;
-    });
-
-    // Group by depth
-    const nodesByDepth = {};
-    let maxDepth = 0;
-    nodes.forEach(n => {
-      const d = depth[n.id];
-      if (!nodesByDepth[d]) nodesByDepth[d] = [];
-      nodesByDepth[d].push(n);
-      maxDepth = Math.max(maxDepth, d);
-    });
-
-    // Position nodes level by level
-    // Limit nodes per row to prevent extremely wide layouts
     const MAX_NODES_PER_ROW = 20;
-    let currentY = 0;
 
-    for (let d = 0; d <= maxDepth; d++) {
-      const levelNodes = nodesByDepth[d] || [];
-
-      // Split level into multiple rows if needed
-      const numRows = Math.ceil(levelNodes.length / MAX_NODES_PER_ROW);
-
-      for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
-        const startIdx = rowIndex * MAX_NODES_PER_ROW;
-        const endIdx = Math.min(startIdx + MAX_NODES_PER_ROW, levelNodes.length);
-        const rowNodes = levelNodes.slice(startIdx, endIdx);
-
-        const rowWidth = rowNodes.length * HORIZONTAL_GAP;
-        const startX = -rowWidth / 2 + HORIZONTAL_GAP / 2;
-
-        rowNodes.forEach((node, index) => {
-          node.x = startX + index * HORIZONTAL_GAP;
-          node.y = currentY;
-        });
-
-        currentY += VERTICAL_GAP;
-      }
-
-      // Add extra gap between depth levels
-      if (numRows > 0 && d < maxDepth) {
-        currentY += VERTICAL_GAP / 2;
-      }
-    }
-
-    // Center the entire graph (find bounds and shift)
-    let minX = Infinity, maxX = -Infinity;
-    nodes.forEach(n => {
-      minX = Math.min(minX, n.x);
-      maxX = Math.max(maxX, n.x);
+    // Simple grid layout
+    nodes.forEach((node, index) => {
+      const row = Math.floor(index / MAX_NODES_PER_ROW);
+      const col = index % MAX_NODES_PER_ROW;
+      node.x = col * HORIZONTAL_GAP + HORIZONTAL_GAP / 2;
+      node.y = row * VERTICAL_GAP + VERTICAL_GAP / 2;
     });
-    const offsetX = -minX + HORIZONTAL_GAP / 2;
-    nodes.forEach(n => { n.x += offsetX; });
 
-    // Create dagreGraph for edge routing if dagre is available
-    if (typeof dagre !== 'undefined') {
-      dagreGraph = new dagre.graphlib.Graph();
-      dagreGraph.setGraph({ rankdir: 'TB' });
-      dagreGraph.setDefaultEdgeLabel(() => ({}));
+    dagreGraph = null;
+    currentClusters = new Map();
+    fitToView();
+  }
 
-      nodes.forEach(node => {
-        dagreGraph.setNode(node.id, {
-          x: node.x,
-          y: node.y,
-          width: getNodeWidth(node),
-          height: 40
-        });
-      });
+  // Layout with clustering support
+  function layoutWithClustering(getClusterForNode) {
+    if (nodes.length === 0) return new Map();
+
+    if (typeof dagre === 'undefined') {
+      layoutNodesFallback();
+      return new Map();
     }
 
-    // Fit the view
+    dagreGraph = new dagre.graphlib.Graph({ compound: true });
+    dagreGraph.setGraph({
+      rankdir: 'TB',
+      ranksep: 100,
+      nodesep: 60,
+      marginx: 40,
+      marginy: 40,
+      ranker: 'network-simplex'
+    });
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+    // Identify clusters
+    const clusters = new Map();
+    nodes.forEach(node => {
+      const clusterId = getClusterForNode(node);
+      if (clusterId) {
+        if (!clusters.has(clusterId)) clusters.set(clusterId, []);
+        clusters.get(clusterId).push(node);
+      }
+    });
+
+    // Add cluster subgraphs to dagre
+    clusters.forEach((clusterNodes, clusterId) => {
+      dagreGraph.setNode(clusterId, {
+        label: clusterId.replace(/^(ctx:|dir:)/, ''),
+        clusterLabelPos: 'top'
+      });
+    });
+
+    // Add nodes with parent clusters
+    nodes.forEach(node => {
+      const clusterId = getClusterForNode(node);
+      dagreGraph.setNode(node.id, {
+        label: node.name,
+        width: getNodeWidth(node),
+        height: 40
+      });
+      if (clusterId) {
+        dagreGraph.setParent(node.id, clusterId);
+      }
+    });
+
+    // Add edges
+    graphData.edges
+      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
+      .forEach(edge => {
+        if (dagreGraph.hasNode(edge.from) && dagreGraph.hasNode(edge.to)) {
+          dagreGraph.setEdge(edge.from, edge.to);
+        }
+      });
+
+    dagre.layout(dagreGraph);
+
+    // Extract positions
+    nodes.forEach(node => {
+      const dagreNode = dagreGraph.node(node.id);
+      if (dagreNode) {
+        node.x = dagreNode.x;
+        node.y = dagreNode.y;
+      }
+    });
+
+    currentClusters = clusters;
     fitToView();
+    return clusters;
+  }
+
+  // Layout for State Flow view - directory-based clustering
+  function layoutForStateFlow() {
+    const getDirectoryCluster = (node) => {
+      if (!node.data.filePath) return null;
+      const parts = node.data.filePath.split('/');
+      // Find meaningful directory (components, pages, features, etc.)
+      const idx = parts.findIndex(p =>
+        ['components', 'pages', 'features', 'modules', 'views', 'containers', 'src'].includes(p)
+      );
+      if (idx >= 0 && idx < parts.length - 1) {
+        return 'dir:' + parts.slice(idx, parts.length - 1).join('/');
+      }
+      return parts.length > 1 ? 'dir:' + parts[parts.length - 2] : null;
+    };
+
+    return layoutWithClustering(getDirectoryCluster);
+  }
+
+  // Layout for Context view - context boundary clustering
+  function layoutForContextView() {
+    const getContextCluster = (node) => {
+      // Provider nodes create their own cluster
+      for (const boundary of graphData.contextBoundaries) {
+        if (boundary.providerComponent === node.id) {
+          return 'ctx:' + boundary.contextName;
+        }
+      }
+      // Consumer nodes join their provider's cluster
+      for (const boundary of graphData.contextBoundaries) {
+        if (boundary.childComponents.includes(node.id)) {
+          return 'ctx:' + boundary.contextName;
+        }
+      }
+      return null;
+    };
+
+    return layoutWithClustering(getContextCluster);
+  }
+
+  // Draw cluster boundary helper
+  function drawClusterBoundary(g, clusterInfo, label, strokeColor) {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 20);
+    rect.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 25);
+    rect.setAttribute('width', clusterInfo.width + 40);
+    rect.setAttribute('height', clusterInfo.height + 45);
+    rect.setAttribute('rx', 8);
+    rect.setAttribute('fill', 'rgba(255,255,255,0.02)');
+    rect.setAttribute('stroke', strokeColor);
+    rect.setAttribute('stroke-width', '1');
+    rect.setAttribute('stroke-dasharray', '4,4');
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 10);
+    text.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 8);
+    text.setAttribute('fill', '#8b949e');
+    text.setAttribute('font-size', '10');
+    text.setAttribute('font-family', 'inherit');
+    text.textContent = label;
+
+    g.insertBefore(text, g.firstChild);
+    g.insertBefore(rect, g.firstChild);
   }
 
   function fitToView() {
@@ -689,12 +846,24 @@ const summaryData = {"components":{"totalComponents":6},"state":{"totalStateNode
   }
 
   function renderFlowView(g) {
-    // Draw edges first (behind nodes)
+    // Layout with directory clustering
+    const clusters = layoutForStateFlow();
+
+    // Draw cluster boundaries (directories)
+    clusters.forEach((clusterNodes, clusterId) => {
+      if (!clusterId.startsWith('dir:')) return;
+      const clusterInfo = dagreGraph ? dagreGraph.node(clusterId) : null;
+      if (clusterInfo && clusterInfo.width && clusterInfo.height) {
+        drawClusterBoundary(g, clusterInfo, clusterId.replace('dir:', ''), '#30363d');
+      }
+    });
+
+    // Draw edges (only for visible nodes)
     try {
       graphData.edges.forEach(edge => {
         const source = nodes.find(n => n.id === edge.from);
         const target = nodes.find(n => n.id === edge.to);
-        if (source && target) {
+        if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
           drawEdge(g, source, target, edge);
         }
       });
@@ -702,64 +871,141 @@ const summaryData = {"components":{"totalComponents":6},"state":{"totalStateNode
       console.error('Error drawing edges:', e);
     }
 
-    // Always draw nodes
-    nodes.forEach(node => drawNode(g, node));
+    // Draw visible nodes
+    getVisibleNodes().forEach(node => drawNode(g, node));
   }
 
   function renderContextView(g) {
-    const total = graphData.contextBoundaries.length;
+    // Layout with context boundary clustering
+    const clusters = layoutForContextView();
 
-    // Helper to normalize context names for matching
-    function normalizeContextName(name) {
-      return name.toLowerCase()
-        .replace(/context$/i, '')
-        .replace(/provider$/i, '')
-        .replace(/consumer$/i, '');
-    }
+    // Draw context boundaries from dagre cluster positions
+    clusters.forEach((clusterNodes, clusterId) => {
+      if (!clusterId.startsWith('ctx:')) return;
+      const clusterInfo = dagreGraph ? dagreGraph.node(clusterId) : null;
+      if (clusterInfo && clusterInfo.width && clusterInfo.height) {
+        // Draw context boundary using cluster info
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 20);
+        rect.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 25);
+        rect.setAttribute('width', clusterInfo.width + 40);
+        rect.setAttribute('height', clusterInfo.height + 45);
+        rect.setAttribute('rx', 8);
+        rect.setAttribute('class', 'context-boundary');
 
-    graphData.contextBoundaries.forEach((boundary, index) => {
-      const provider = nodes.find(n => n.id === boundary.providerComponent);
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 10);
+        label.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 8);
+        label.setAttribute('fill', '#bc8cff');
+        label.setAttribute('font-size', '11');
+        label.setAttribute('font-weight', '500');
+        label.textContent = clusterId.replace('ctx:', '') + '.Provider';
 
-      // Find all consumers - match by ID
-      const consumers = boundary.childComponents
-        .map(id => nodes.find(n => n.id === id))
-        .filter(n => n !== undefined);
-
-      // Draw boundary if we have provider
-      if (provider) {
-        const normalizedBoundaryName = normalizeContextName(boundary.contextName);
-
-        // Include ALL nodes that consume this context
-        const contextConsumers = nodes.filter(n => {
-          if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
-
-          return n.data.contextConsumers.some(consumerContext => {
-            const normalizedConsumer = normalizeContextName(consumerContext);
-            return consumerContext === boundary.contextName ||
-                   normalizedConsumer === normalizedBoundaryName ||
-                   normalizedConsumer.includes(normalizedBoundaryName) ||
-                   normalizedBoundaryName.includes(normalizedConsumer);
-          });
-        });
-
-        const allConsumers = [...new Set([...consumers, ...contextConsumers])];
-        drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
+        g.insertBefore(label, g.firstChild);
+        g.insertBefore(rect, g.firstChild);
       }
     });
 
+    // Fallback: if no clusters were rendered, use the old boundary drawing method
+    if (clusters.size === 0 && graphData.contextBoundaries.length > 0) {
+      const total = graphData.contextBoundaries.length;
+
+      function normalizeContextName(name) {
+        return name.toLowerCase()
+          .replace(/context$/i, '')
+          .replace(/provider$/i, '')
+          .replace(/consumer$/i, '');
+      }
+
+      graphData.contextBoundaries.forEach((boundary, index) => {
+        const provider = nodes.find(n => n.id === boundary.providerComponent);
+        const consumers = boundary.childComponents
+          .map(id => nodes.find(n => n.id === id))
+          .filter(n => n !== undefined);
+
+        if (provider) {
+          const normalizedBoundaryName = normalizeContextName(boundary.contextName);
+          const contextConsumers = nodes.filter(n => {
+            if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
+            return n.data.contextConsumers.some(consumerContext => {
+              const normalizedConsumer = normalizeContextName(consumerContext);
+              return consumerContext === boundary.contextName ||
+                     normalizedConsumer === normalizedBoundaryName ||
+                     normalizedConsumer.includes(normalizedBoundaryName) ||
+                     normalizedBoundaryName.includes(normalizedConsumer);
+            });
+          });
+          const allConsumers = [...new Set([...consumers, ...contextConsumers])];
+          drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
+        }
+      });
+    }
+
+    // Draw props edges first (subtle, in background) to show component hierarchy
+    graphData.edges
+      .filter(e => e.mechanism === 'props')
+      .forEach(edge => {
+        const source = nodes.find(n => n.id === edge.from);
+        const target = nodes.find(n => n.id === edge.to);
+        if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
+          drawEdgeSubtle(g, source, target);
+        }
+      });
+
+    // Draw context edges (only for visible nodes)
     graphData.edges
       .filter(e => e.mechanism === 'context')
       .forEach(edge => {
         const source = nodes.find(n => n.id === edge.from);
         const target = nodes.find(n => n.id === edge.to);
-        if (source && target) drawEdge(g, source, target, edge);
+        if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
+          drawEdge(g, source, target, edge);
+        }
       });
 
-    // Draw nodes with purple border for providers
-    nodes.forEach(node => {
+    // Draw visible nodes with purple border for providers
+    getVisibleNodes().forEach(node => {
       const isProvider = node.data.contextProviders && node.data.contextProviders.length > 0;
       drawNode(g, node, isProvider ? '#8957e5' : null);
     });
+  }
+
+  // Draw subtle edge for showing hierarchy in context view
+  function drawEdgeSubtle(g, source, target) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const nodeHeight = 20;
+
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+
+    let startX = source.x;
+    let startY = source.y + nodeHeight;
+    let endX = target.x;
+    let endY = target.y - nodeHeight;
+
+    if (dy < 0) {
+      startY = source.y - nodeHeight;
+      endY = target.y + nodeHeight;
+    }
+
+    const sourceWidth = getNodeWidth(source) / 2;
+    const targetWidth = getNodeWidth(target) / 2;
+
+    if (Math.abs(dx) > Math.abs(dy) * 2) {
+      startY = source.y;
+      endY = target.y;
+      startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
+      endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
+    }
+
+    const midY = (startY + endY) / 2;
+    const d = `M${startX},${startY} C${startX},${midY} ${endX},${midY} ${endX},${endY}`;
+
+    path.setAttribute('d', d);
+    path.setAttribute('class', 'edge edge-props-subtle');
+    path.setAttribute('fill', 'none');
+
+    g.insertBefore(path, g.firstChild);
   }
 
   function renderDrillingView(g) {
@@ -920,6 +1166,44 @@ const summaryData = {"components":{"totalComponents":6},"state":{"totalStateNode
 
     group.appendChild(rect);
     group.appendChild(text);
+
+    // Add collapse indicator if node has children (only in flow/context views)
+    if (currentView !== 'drilling') {
+      const hasChildren = graphData.edges.some(e =>
+        e.from === node.id && e.mechanism === 'props'
+      );
+
+      if (hasChildren) {
+        const isCollapsed = collapsedNodes.has(node.id);
+        const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        indicator.setAttribute('x', width / 2 - 14);
+        indicator.setAttribute('y', 4);
+        indicator.setAttribute('fill', '#8b949e');
+        indicator.setAttribute('font-size', '12');
+        indicator.setAttribute('class', 'collapse-indicator');
+        indicator.textContent = isCollapsed ? '\u25B6' : '\u25BC';
+
+        indicator.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleCollapse(node.id);
+        });
+        group.appendChild(indicator);
+
+        // Show hidden count when collapsed
+        if (isCollapsed) {
+          const count = getDescendants(node.id).size;
+          if (count > 0) {
+            const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            badge.setAttribute('x', width / 2 + 6);
+            badge.setAttribute('y', -10);
+            badge.setAttribute('fill', '#f0883e');
+            badge.setAttribute('font-size', '10');
+            badge.textContent = '+' + count;
+            group.appendChild(badge);
+          }
+        }
+      }
+    }
 
     group.addEventListener('click', () => showNodeDetails(node));
 

@@ -1,11 +1,11 @@
-import React from 'react';
-import { NavItem } from './NavItem';
+import React from "react";
+import {NavItem} from "./NavItem";
 
 interface NavBarProps {
   count: number;
 }
 
-export function NavBar({ count }: NavBarProps) {
+export function NavBar({count}: NavBarProps) {
   return (
     <nav>
       <NavItem label="Home" count={count} />

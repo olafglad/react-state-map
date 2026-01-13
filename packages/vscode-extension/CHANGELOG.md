@@ -2,6 +2,31 @@
 
 All notable changes to React State Map will be documented in this file.
 
+## [0.1.5] - 2025-01-13
+
+### Added
+- **Full Dagre Layout**: Switched from BFS depth-based layout to dagre's hierarchical algorithm
+  - Automatic edge crossing minimization
+  - Better handling of disconnected components
+  - Compound graph support for clustering
+- **Directory Clustering** (State Flow view): Components automatically grouped by directory
+  - Recognizes common directories: components/, pages/, features/, modules/, views/
+  - Visual cluster boundaries with dashed outlines
+- **Context Boundary Clustering** (Context view): Consumers grouped inside provider boundaries
+  - Context boundaries now influence layout, not just overlaid
+  - Clearer visual hierarchy of context scope
+- **Collapsible Subtrees**: Click to collapse/expand component subtrees
+  - Collapse indicator (▶/▼) on nodes with children
+  - Hidden child count badge (+N) when collapsed
+  - Reduces visual complexity for large graphs
+- **Hierarchy Lines in Context View**: Subtle props edges show parent-child relationships
+  - Makes it clear why collapsing a parent hides its children
+  - Lighter styling so context edges remain the focus
+
+### Changed
+- Layout algorithm now uses dagre for both node positioning and edge routing
+- Context view shows both context edges (bold purple) and props edges (subtle gray)
+
 ## [0.1.4] - 2025-01-13
 
 ### Added

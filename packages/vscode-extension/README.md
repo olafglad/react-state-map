@@ -17,15 +17,26 @@ See at a glance which components own state and how it propagates through your co
 - **Green nodes** = Stateless components (receive props only)
 - **Green arrows** = Props flow
 - **Purple dashed arrows** = Context flow
+- **Directory clustering** = Components grouped by folder structure
 
 ### Context Boundary Detection
 Visualize your React Context providers and see exactly which components are inside or outside each context boundary.
 
 ![Context Boundaries View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/context-boundaries.png)
 
+- **Context clustering**: Consumer components grouped inside provider boundaries
+- **Subtle hierarchy lines**: Gray lines show parent-child relationships
 - Dashed purple boundaries show context scope
-- Nested contexts displayed with offset for clarity
 - Easily spot components outside a context boundary
+
+### Collapsible Subtrees
+Reduce visual complexity by collapsing component subtrees.
+
+![Collapsed Node](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/collapsed-node.png)
+
+- **Click ▼/▶** on any node with children to collapse/expand
+- **+N badge** shows how many children are hidden
+- Great for focusing on specific parts of large codebases
 
 ### Prop Drilling Detection
 Automatically detect when props are passed through too many component layers.
@@ -70,6 +81,7 @@ That's it! The visualization updates automatically when you save files.
 
 - **Pan**: Click and drag the canvas
 - **Zoom**: Scroll wheel
+- **Collapse/Expand**: Click ▼/▶ on nodes to toggle subtrees
 - **Switch views**: Click tabs (State Flow / Context Boundaries / Prop Drilling)
 - **Inspect**: Click any component node for details
 - **Navigate**: Click file links to jump to source code
