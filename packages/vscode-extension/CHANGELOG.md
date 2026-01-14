@@ -2,6 +2,31 @@
 
 All notable changes to React State Map will be documented in this file.
 
+## [0.1.6] - 2025-01-14
+
+### Added
+- **Pass-Through Ratio Visualization**: Component sidebar now shows prop usage metrics
+  - Visual bar showing consumed/passed/transformed/ignored prop distribution
+  - Role badge (consumer/passthrough/transformer/mixed) next to component name
+  - Stats badge showing passthrough component count
+
+- **Bundle Detection**: Detect large object props being passed through components
+  - Stats badge showing problematic bundle count
+  - Identifies inline object literals with 5+ properties
+
+- **Context Leak Detection**: Detect anti-pattern of extracting context and re-passing as props
+  - Finds components that use `useContext` then pass values as props to children
+  - Stats badge showing leak count
+
+- **Rename Tracking**: Track props through rename chains
+  - Detects destructuring renames: `const { id: dealId } = props`
+  - Detects assignment renames: `const newName = oldProp`
+  - Stats badge showing complex rename count
+
+### Changed
+- Stats bar now shows 5 detection badges: drilling, passthrough, bundles, leaks, renames
+- Updated to @react-state-map/core v0.1.6 with all new detection features
+
 ## [0.1.5] - 2025-01-13
 
 ### Added

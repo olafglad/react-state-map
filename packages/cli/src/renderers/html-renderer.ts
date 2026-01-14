@@ -32,10 +32,42 @@ export function generateHTML(graph: SerializedStateFlowGraph): string {
   const edgeCount = graph.edges.length;
   const drillingCount = graph.propDrillingPaths.length;
 
+  // Build metrics lookup map
+  const metricsMap: Record<string, typeof graph.componentMetrics[0]> = {};
+  for (const metric of graph.componentMetrics) {
+    metricsMap[metric.componentId] = metric;
+  }
+
+  // Count roles
+  const roleDistribution = { passthrough: 0, consumer: 0, transformer: 0, mixed: 0 };
+  for (const metric of graph.componentMetrics) {
+    roleDistribution[metric.role]++;
+  }
+
+  // Count bundles
+  const bundleCount = graph.bundles.length;
+  const largeBundles = graph.bundles.filter(b => b.estimatedSize >= 5).length;
+
+  // Count context leaks
+  const contextLeakCount = graph.contextLeaks?.length || 0;
+  const highSeverityLeaks = graph.contextLeaks?.filter(l => l.severity === 'high').length || 0;
+
+  // Count prop chains (renames)
+  const propChainCount = graph.propChains?.length || 0;
+  const complexChains = graph.propChains?.filter(c => c.depth >= 2).length || 0;
+
   const summaryJSON = JSON.stringify({
     components: { totalComponents: components.length },
     state: { totalStateNodes: stateCount },
-    flow: { totalEdges: edgeCount }
+    flow: { totalEdges: edgeCount },
+    roleDistribution,
+    componentMetrics: metricsMap,
+    bundles: graph.bundles,
+    bundleStats: { total: bundleCount, large: largeBundles },
+    contextLeaks: graph.contextLeaks || [],
+    contextLeakStats: { total: contextLeakCount, highSeverity: highSeverityLeaks },
+    propChains: graph.propChains || [],
+    propChainStats: { total: propChainCount, complex: complexChains }
   });
 
   return `<!DOCTYPE html>
@@ -415,6 +447,110 @@ function getStyles(): string {
       border-radius: 4px;
       font-size: 11px;
       margin-left: 10px;
+    }
+
+    .passthrough-badge {
+      background: #d29922;
+      color: #0d1117;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      margin-left: 6px;
+    }
+
+    .role-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .role-passthrough {
+      background: #d29922;
+      color: #0d1117;
+    }
+
+    .role-consumer {
+      background: #238636;
+      color: white;
+    }
+
+    .role-transformer {
+      background: #8957e5;
+      color: white;
+    }
+
+    .role-mixed {
+      background: #30363d;
+      color: #c9d1d9;
+    }
+
+    .metrics-bar {
+      display: flex;
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 8px 0;
+      background: #21262d;
+    }
+
+    .metrics-bar-consumed {
+      background: #238636;
+    }
+
+    .metrics-bar-passed {
+      background: #d29922;
+    }
+
+    .metrics-bar-ignored {
+      background: #f85149;
+    }
+
+    .bundle-badge {
+      background: #a371f7;
+      color: #0d1117;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      margin-left: 6px;
+    }
+
+    .leak-badge {
+      background: #da3633;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      margin-left: 6px;
+    }
+
+    .rename-badge {
+      background: #6e7681;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 9px;
+      margin-left: 6px;
+    }
+
+    .bundle-item {
+      padding: 8px;
+      margin: 6px 0;
+      background: #21262d;
+      border-radius: 6px;
+      border-left: 3px solid #a371f7;
+    }
+
+    .bundle-name {
+      font-weight: 600;
+      color: #a371f7;
+    }
+
+    .bundle-props {
+      font-size: 11px;
+      color: #8b949e;
+      margin-top: 4px;
     }
   `;
 }
@@ -1395,6 +1531,7 @@ function getScript(): string {
   function showNodeDetails(node) {
     const comp = node.data;
     const fileName = comp.filePath.split('/').pop();
+    const metrics = summaryData.componentMetrics?.[node.id];
 
     let html = \`
       <div class="sidebar-content">
@@ -1403,6 +1540,56 @@ function getScript(): string {
           <div class="file-link">\${fileName}:\${comp.line}</div>
         </div>
     \`;
+
+    // Show prop metrics if available
+    if (metrics) {
+      const roleLabels = {
+        passthrough: 'Pass-through',
+        consumer: 'Consumer',
+        transformer: 'Transformer',
+        mixed: 'Mixed'
+      };
+      const roleLabel = roleLabels[metrics.role] || metrics.role;
+
+      html += \`
+        <div class="sidebar-section">
+          <h3>Prop Metrics</h3>
+          <div class="detail-row">
+            <span class="detail-label">Role</span>
+            <span class="role-badge role-\${metrics.role}">\${roleLabel}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Total Props</span>
+            <span class="detail-value">\${metrics.totalPropsReceived}</span>
+          </div>
+          <div class="metrics-bar">
+            <div class="metrics-bar-consumed" style="width: \${metrics.consumptionRatio * 100}%"></div>
+            <div class="metrics-bar-passed" style="width: \${metrics.passthroughRatio * 100}%"></div>
+            <div class="metrics-bar-ignored" style="width: \${(metrics.propsIgnored / metrics.totalPropsReceived) * 100}%"></div>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Consumed</span>
+            <span class="detail-value">\${metrics.propsConsumed} (\${Math.round(metrics.consumptionRatio * 100)}%)</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Passed</span>
+            <span class="detail-value">\${metrics.propsPassed} (\${Math.round(metrics.passthroughRatio * 100)}%)</span>
+          </div>
+          \${metrics.propsIgnored > 0 ? \`
+          <div class="detail-row">
+            <span class="detail-label">Ignored</span>
+            <span class="detail-value" style="color: #f85149">\${metrics.propsIgnored}</span>
+          </div>
+          \` : ''}
+          \${metrics.propsTransformed > 0 ? \`
+          <div class="detail-row">
+            <span class="detail-label">Transformed</span>
+            <span class="detail-value">\${metrics.propsTransformed}</span>
+          </div>
+          \` : ''}
+        </div>
+      \`;
+    }
 
     if (comp.stateProvided.length > 0) {
       html += \`
@@ -1487,11 +1674,39 @@ function getScript(): string {
       drillingBadge = \`<span class="warning-badge">\${drillingCount} drilling</span>\`;
     }
 
+    let passthroughBadge = '';
+    const passthroughCount = summaryData.roleDistribution?.passthrough || 0;
+    if (passthroughCount > 0) {
+      passthroughBadge = \`<span class="passthrough-badge">\${passthroughCount} passthrough</span>\`;
+    }
+
+    let bundleBadge = '';
+    const largeBundleCount = summaryData.bundleStats?.large || 0;
+    if (largeBundleCount > 0) {
+      bundleBadge = \`<span class="bundle-badge">\${largeBundleCount} bundles</span>\`;
+    }
+
+    let leakBadge = '';
+    const leakCount = summaryData.contextLeakStats?.total || 0;
+    if (leakCount > 0) {
+      leakBadge = \`<span class="leak-badge">\${leakCount} leaks</span>\`;
+    }
+
+    let renameBadge = '';
+    const renameCount = summaryData.propChainStats?.complex || 0;
+    if (renameCount > 0) {
+      renameBadge = \`<span class="rename-badge">\${renameCount} renames</span>\`;
+    }
+
     statsEl.innerHTML = \`
       <span>\${summaryData.components.totalComponents} components</span>
       <span>\${summaryData.state.totalStateNodes} state</span>
       <span>\${summaryData.flow.totalEdges} edges</span>
       \${drillingBadge}
+      \${passthroughBadge}
+      \${bundleBadge}
+      \${leakBadge}
+      \${renameBadge}
     \`;
   }
 

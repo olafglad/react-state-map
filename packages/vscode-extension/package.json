@@ -2,7 +2,7 @@
   "name": "react-state-map-vscode",
   "displayName": "React State Map",
   "description": "Visualize React state flow, context boundaries, and prop drilling through static analysis. Supports useState, useContext, Redux, Zustand, and custom hooks.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "OlafGlad",
   "license": "MIT",
   "icon": "images/icon.png",

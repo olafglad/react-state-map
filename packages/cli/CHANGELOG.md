@@ -2,6 +2,30 @@
 
 All notable changes to @react-state-map/cli will be documented in this file.
 
+## [0.1.6] - 2025-01-14
+
+### Added
+- **Pass-Through Ratio Visualization**: Component sidebar now shows prop usage metrics
+  - Visual bar showing consumed/passed/transformed/ignored prop distribution
+  - Role badge (consumer/passthrough/transformer/mixed) next to component name
+  - Stats badge showing passthrough component count
+
+- **Bundle Detection Warnings**: New warning type for large prop bundles
+  - `[PROP_BUNDLE]` warnings in CLI output
+  - Stats badge showing problematic bundle count
+
+- **Context Leak Detection**: New warning type for context anti-patterns
+  - `[CONTEXT_LEAK]` warnings showing which components leak context values as props
+  - Stats badge showing leak count
+
+- **Rename Tracking**: New warning type for prop rename chains
+  - `[PROP_RENAME_CHAIN]` warnings showing props renamed multiple times
+  - Stats badge showing complex rename count
+
+### Changed
+- Stats bar now shows 5 detection badges: drilling, passthrough, bundles, leaks, renames
+- Updated to @react-state-map/core v0.1.6 with all new detection features
+
 ## [0.1.5] - 2025-01-13
 
 ### Added

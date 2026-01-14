@@ -1,5 +1,5 @@
-import { Project, SourceFile } from 'ts-morph';
-import { parseFile, resetIdCounter } from './file-parser.js';
+import { Project, SourceFile, FunctionDeclaration, ArrowFunction, FunctionExpression } from 'ts-morph';
+import { parseFile, resetIdCounter, analyzePropsUsage, extractEnhancedContextUsage, buildScopeMap, ParsedComponent, JsxChildInfo, JsxPropBundleInfo } from './file-parser.js';
 import type {
   ParseOptions,
   ParseResult,
@@ -11,20 +11,23 @@ import type {
   PropDrillingPath,
   ParseError,
   ParseWarning,
+  ComponentPropMetrics,
+  PropUsage,
+  ComponentRole,
+  PropBundle,
+  ContextLeak,
+  ContextLeakSeverity,
+  PropChain,
+  PropRename,
 } from '../types.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-
-interface JsxChildInfo {
-  componentName: string;
-  props: Map<string, string>;
-  line: number;
-}
 
 interface ParsedComponentData {
   component: ComponentNode;
   stateNodes: StateNode[];
   jsxChildren: JsxChildInfo[];
+  functionNode: FunctionDeclaration | ArrowFunction | FunctionExpression;
 }
 
 export class ReactParser {
@@ -274,12 +277,195 @@ export class ReactParser {
 
     const propDrillingPaths = this.detectPropDrilling(components, edges, stateNodes);
 
+    // Fourth pass: calculate component prop metrics
+    const componentMetrics = this.calculateAllComponentMetrics(parsedData);
+
+    // Fifth pass: detect prop bundles
+    const bundles = this.detectBundles(parsedData, componentsByName);
+
+    // Sixth pass: detect context leaks
+    const contextLeaks = this.detectContextLeaks(parsedData, componentsByName, contextBoundaries);
+
+    // Seventh pass: track prop renames and build prop chains
+    const propChains = this.buildPropChains(parsedData, edges, componentsByName);
+
     return {
       components,
       stateNodes,
       edges,
       contextBoundaries,
       propDrillingPaths,
+      componentMetrics,
+      bundles,
+      contextLeaks,
+      propChains,
+    };
+  }
+
+  private detectBundles(
+    parsedData: ParsedComponentData[],
+    componentsByName: Map<string, ComponentNode>
+  ): PropBundle[] {
+    const bundles: PropBundle[] = [];
+    let bundleIdCounter = 0;
+
+    for (const { component, jsxChildren } of parsedData) {
+      for (const child of jsxChildren) {
+        // Check for bundle props in this JSX child
+        for (const bundleInfo of child.bundleProps) {
+          // Only track bundles with known properties or that look significant
+          const isSignificant =
+            bundleInfo.isObjectLiteral && bundleInfo.estimatedSize >= 3 ||  // Inline object with 3+ props
+            bundleInfo.propName === '...spread';  // Spread is always significant
+
+          if (isSignificant) {
+            const bundle: PropBundle = {
+              id: `bundle_${++bundleIdCounter}`,
+              propName: bundleInfo.propName,
+              sourceComponentId: component.id,
+              sourceComponentName: component.name,
+              estimatedSize: bundleInfo.estimatedSize,
+              properties: bundleInfo.properties,
+              passedThrough: [],  // Will be populated by tracking
+              isObjectLiteral: bundleInfo.isObjectLiteral,
+              filePath: component.filePath,
+              line: child.line,
+            };
+
+            // Track where this bundle flows
+            this.trackBundleFlow(bundle, child.componentName, componentsByName, parsedData);
+
+            bundles.push(bundle);
+
+            // Add warning for large bundles
+            if (bundleInfo.estimatedSize >= 5) {
+              this.warnings.push({
+                filePath: component.filePath,
+                line: child.line,
+                message: `Large prop bundle "${bundleInfo.propName}" with ${bundleInfo.estimatedSize} properties passed to ${child.componentName}`,
+                code: 'PROP_BUNDLE',
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return bundles;
+  }
+
+  private trackBundleFlow(
+    bundle: PropBundle,
+    targetComponentName: string,
+    componentsByName: Map<string, ComponentNode>,
+    parsedData: ParsedComponentData[]
+  ): void {
+    const visited = new Set<string>();
+    const queue: string[] = [targetComponentName];
+
+    while (queue.length > 0) {
+      const currentName = queue.shift()!;
+      if (visited.has(currentName)) continue;
+      visited.add(currentName);
+
+      const component = componentsByName.get(currentName);
+      if (!component) continue;
+
+      // Find this component's parsed data to check its JSX children
+      const componentData = parsedData.find(d => d.component.name === currentName);
+      if (!componentData) continue;
+
+      // Check if this component passes a similar bundle prop to its children
+      for (const child of componentData.jsxChildren) {
+        // Look for props that match the bundle's prop name (possibly renamed)
+        const matchingProps = child.bundleProps.filter(
+          bp => bp.propName === bundle.propName ||
+                (bp.estimatedSize === -1 && bp.propName.toLowerCase().includes(bundle.propName.toLowerCase().replace(/data|info|value|state/i, '')))
+        );
+
+        if (matchingProps.length > 0) {
+          // This component passes the bundle through
+          if (!bundle.passedThrough.includes(component.id)) {
+            bundle.passedThrough.push(component.id);
+          }
+          queue.push(child.componentName);
+        }
+      }
+    }
+  }
+
+  private calculateAllComponentMetrics(parsedData: ParsedComponentData[]): ComponentPropMetrics[] {
+    const metrics: ComponentPropMetrics[] = [];
+
+    for (const { component, functionNode } of parsedData) {
+      const propNames = component.props.map(p => p.name);
+
+      // Skip components with no props
+      if (propNames.length === 0) {
+        continue;
+      }
+
+      const propUsages = analyzePropsUsage(functionNode, propNames);
+      const componentMetric = this.calculateComponentMetrics(component, propUsages);
+      metrics.push(componentMetric);
+    }
+
+    return metrics;
+  }
+
+  private calculateComponentMetrics(
+    component: ComponentNode,
+    propUsages: PropUsage[]
+  ): ComponentPropMetrics {
+    let consumed = 0;
+    let passed = 0;
+    let transformed = 0;
+    let ignored = 0;
+
+    for (const usage of propUsages) {
+      const isConsumed = usage.usedInRender || usage.usedInCallback || usage.usedInEffect || usage.usedInLogic;
+      const isPassed = usage.passedToChild;
+      const isTransformed = usage.transformed;
+
+      if (isConsumed) consumed++;
+      if (isPassed) passed++;
+      if (isTransformed) transformed++;
+
+      // Ignored = not consumed AND not passed
+      if (!isConsumed && !isPassed) {
+        ignored++;
+      }
+    }
+
+    const total = propUsages.length;
+    const passthroughRatio = total > 0 ? passed / total : 0;
+    const consumptionRatio = total > 0 ? consumed / total : 0;
+
+    // Classify the component role
+    let role: ComponentRole;
+    if (passthroughRatio > 0.7 && consumptionRatio < 0.3) {
+      role = 'passthrough';
+    } else if (consumptionRatio > 0.7) {
+      role = 'consumer';
+    } else if (transformed > 0 && transformed >= passed * 0.5) {
+      role = 'transformer';
+    } else {
+      role = 'mixed';
+    }
+
+    return {
+      componentId: component.id,
+      componentName: component.name,
+      filePath: component.filePath,
+      totalPropsReceived: total,
+      propsConsumed: consumed,
+      propsPassed: passed,
+      propsTransformed: transformed,
+      propsIgnored: ignored,
+      passthroughRatio,
+      consumptionRatio,
+      role,
+      propUsages,
     };
   }
 
@@ -492,5 +678,235 @@ export class ReactParser {
     }
 
     return unused;
+  }
+
+  // ============================================
+  // Context Leak Detection
+  // ============================================
+
+  private detectContextLeaks(
+    parsedData: ParsedComponentData[],
+    componentsByName: Map<string, ComponentNode>,
+    contextBoundaries: ContextBoundary[]
+  ): ContextLeak[] {
+    const leaks: ContextLeak[] = [];
+    let leakIdCounter = 0;
+
+    for (const { component, functionNode, jsxChildren } of parsedData) {
+      // Extract enhanced context usage for this component
+      const contextUsages = extractEnhancedContextUsage(functionNode, component.filePath);
+
+      for (const usage of contextUsages) {
+        // Skip if no context values are passed as props
+        if (usage.passedAsProps.length === 0) continue;
+
+        // Parse the passedAsProps to get component and prop names
+        const passedTo: ContextLeak['passedTo'] = [];
+        const childComponents = new Map<string, string[]>();
+
+        for (const propRef of usage.passedAsProps) {
+          const [childName, propName] = propRef.split(':');
+          if (childName && propName) {
+            const existing = childComponents.get(childName) || [];
+            existing.push(propName);
+            childComponents.set(childName, existing);
+          }
+        }
+
+        // Check if the receiving children could use useContext directly instead
+        // Since the parent component is consuming context and passing to children,
+        // those children could potentially consume the context directly
+        for (const [childName, propNames] of childComponents) {
+          const childComponent = componentsByName.get(childName);
+          if (!childComponent) continue;
+
+          // A context leak occurs when:
+          // 1. Parent uses useContext
+          // 2. Parent passes context values to children as props
+          // 3. Children could potentially use useContext directly instead
+          //
+          // We detect this as a leak because:
+          // - If the parent can access the context, children in the same tree likely can too
+          // - This represents prop drilling of context values
+          passedTo.push({
+            componentId: childComponent.id,
+            componentName: childName,
+            propNames,
+          });
+        }
+
+        // Only create a leak entry if we found valid children receiving context values
+        if (passedTo.length > 0) {
+          const extractedValues = usage.destructuredFields.length > 0
+            ? usage.destructuredFields
+            : [usage.variableName];
+
+          const totalPropsLeaked = passedTo.reduce((sum, p) => sum + p.propNames.length, 0);
+          const severity = this.calculateLeakSeverity(totalPropsLeaked, passedTo.length);
+
+          // Generate fix suggestion
+          const childNames = passedTo.map(p => p.componentName).join(', ');
+          const firstPassedTo = passedTo[0];
+          const potentialFix = passedTo.length === 1 && firstPassedTo
+            ? `${firstPassedTo.componentName} can use useContext(${usage.contextName}) directly instead of receiving ${firstPassedTo.propNames.join(', ')} as props`
+            : `${childNames} can each use useContext(${usage.contextName}) directly`;
+
+          const leak: ContextLeak = {
+            id: `leak_${++leakIdCounter}`,
+            contextName: usage.contextName,
+            leakingComponentId: component.id,
+            leakingComponentName: component.name,
+            extractedValues,
+            passedTo,
+            severity,
+            potentialFix,
+            filePath: component.filePath,
+            line: usage.line,
+          };
+
+          leaks.push(leak);
+
+          // Add warning
+          this.warnings.push({
+            filePath: component.filePath,
+            line: usage.line,
+            message: `Context leak: ${component.name} extracts from ${usage.contextName} and passes to ${childNames} as props`,
+            code: 'CONTEXT_LEAK',
+          });
+        }
+      }
+    }
+
+    return leaks;
+  }
+
+  private normalizeContextName(name: string): string {
+    return name.toLowerCase()
+      .replace(/context$/i, '')
+      .replace(/provider$/i, '')
+      .replace(/consumer$/i, '');
+  }
+
+  private calculateLeakSeverity(propsCount: number, childCount: number): ContextLeakSeverity {
+    if (propsCount >= 5 || childCount >= 3) return 'high';
+    if (propsCount >= 3 || childCount >= 2) return 'medium';
+    return 'low';
+  }
+
+  // ============================================
+  // Prop Chain / Rename Tracking
+  // ============================================
+
+  private buildPropChains(
+    parsedData: ParsedComponentData[],
+    edges: StateFlowEdge[],
+    componentsByName: Map<string, ComponentNode>
+  ): PropChain[] {
+    const propChains: PropChain[] = [];
+    const allRenames: PropRename[] = [];
+    let chainIdCounter = 0;
+
+    // Collect all renames from all components
+    for (const { component, functionNode } of parsedData) {
+      const propNames = component.props.map(p => p.name);
+      if (propNames.length === 0) continue;
+
+      const { renames } = buildScopeMap(
+        functionNode,
+        propNames,
+        component.id,
+        component.name,
+        component.filePath
+      );
+
+      allRenames.push(...renames);
+    }
+
+    // If there are renames, group them by component and create chains
+    if (allRenames.length > 0) {
+      // Group renames by component
+      const renamesByComponent = new Map<string, PropRename[]>();
+      for (const rename of allRenames) {
+        const existing = renamesByComponent.get(rename.componentId) || [];
+        existing.push(rename);
+        renamesByComponent.set(rename.componentId, existing);
+      }
+
+      // Create a chain for each component that has renames
+      const processedComponents = new Set<string>();
+
+      for (const rename of allRenames) {
+        if (processedComponents.has(rename.componentId)) continue;
+        processedComponents.add(rename.componentId);
+
+        const componentRenames = renamesByComponent.get(rename.componentId) || [];
+
+        // Create a chain for this component's renames
+        if (componentRenames.length > 0) {
+          const chain: PropChain = {
+            id: `chain_${++chainIdCounter}`,
+            originalStateId: undefined,
+            originalName: componentRenames[0]?.fromName || '',
+            renames: componentRenames,
+            finalName: componentRenames[componentRenames.length - 1]?.toName || '',
+            depth: componentRenames.length,
+          };
+
+          propChains.push(chain);
+
+          // Warn about complex rename chains (2+ renames in same component)
+          const firstRename = componentRenames[0];
+          if (componentRenames.length >= 2 && firstRename) {
+            const renameList = componentRenames.map(r => `${r.fromName}→${r.toName}`).join(', ');
+            this.warnings.push({
+              filePath: firstRename.filePath,
+              line: firstRename.line,
+              message: `Prop renamed ${componentRenames.length} times in ${rename.componentName}: ${renameList}`,
+              code: 'PROP_RENAME_CHAIN',
+            });
+          }
+        }
+      }
+    }
+
+    return propChains;
+  }
+
+  private traceRenameChain(
+    propName: string,
+    startComponentId: string,
+    edges: StateFlowEdge[],
+    allRenames: PropRename[],
+    componentsByName: Map<string, ComponentNode>
+  ): PropRename[] {
+    const chainRenames: PropRename[] = [];
+    const visited = new Set<string>();
+    let currentName = propName;
+    let currentComponentId = startComponentId;
+
+    // Follow edges and look for renames at each component
+    while (!visited.has(currentComponentId)) {
+      visited.add(currentComponentId);
+
+      // Find renames in this component that match the current prop name
+      const componentRenames = allRenames.filter(
+        r => r.componentId === currentComponentId && r.fromName === currentName
+      );
+
+      for (const rename of componentRenames) {
+        chainRenames.push(rename);
+        currentName = rename.toName;
+      }
+
+      // Find outgoing edge with this prop name to follow to next component
+      const outgoingEdge = edges.find(
+        e => e.from === currentComponentId && e.propName === currentName && e.mechanism === 'props'
+      );
+
+      if (!outgoingEdge) break;
+      currentComponentId = outgoingEdge.to;
+    }
+
+    return chainRenames;
   }
 }

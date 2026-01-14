@@ -399,6 +399,127 @@ function getStyles(): string {
       font-size: 10px;
       margin-left: 8px;
     }
+
+    .passthrough-badge {
+      background: var(--vscode-charts-yellow);
+      color: #000;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      margin-left: 8px;
+    }
+
+    .bundle-badge {
+      background: var(--vscode-charts-orange, #f97316);
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      margin-left: 8px;
+    }
+
+    .leak-badge {
+      background: var(--vscode-charts-red, #da3633);
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      margin-left: 8px;
+    }
+
+    .rename-badge {
+      background: var(--vscode-descriptionForeground, #6e7681);
+      color: var(--vscode-editor-background, white);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      margin-left: 8px;
+    }
+
+    /* Role badges */
+    .role-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 500;
+      margin-left: 8px;
+    }
+
+    .role-consumer {
+      background: var(--vscode-charts-green);
+      color: white;
+    }
+
+    .role-passthrough {
+      background: var(--vscode-charts-yellow);
+      color: #000;
+    }
+
+    .role-transformer {
+      background: var(--vscode-charts-blue);
+      color: white;
+    }
+
+    .role-mixed {
+      background: var(--vscode-charts-purple);
+      color: white;
+    }
+
+    /* Metrics visualization */
+    .metrics-section {
+      margin-top: 12px;
+    }
+
+    .metrics-bar-container {
+      display: flex;
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--vscode-input-background);
+      margin: 8px 0;
+    }
+
+    .metrics-bar-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .metrics-bar-consumed {
+      background: var(--vscode-charts-green);
+    }
+
+    .metrics-bar-passed {
+      background: var(--vscode-charts-yellow);
+    }
+
+    .metrics-bar-transformed {
+      background: var(--vscode-charts-blue);
+    }
+
+    .metrics-bar-ignored {
+      background: var(--vscode-charts-red);
+    }
+
+    .metrics-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 10px;
+    }
+
+    .metrics-legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .metrics-legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
   `;
 }
 
@@ -1446,10 +1567,24 @@ function getScript(): string {
     const comp = node.data;
     const fileName = comp.filePath.split('/').pop();
 
+    // Find metrics for this component
+    const metrics = graphData.componentMetrics?.find(m => m.componentId === node.id);
+
+    let roleHtml = '';
+    if (metrics) {
+      const roleColors = {
+        consumer: 'role-consumer',
+        passthrough: 'role-passthrough',
+        transformer: 'role-transformer',
+        mixed: 'role-mixed'
+      };
+      roleHtml = \`<span class="role-badge \${roleColors[metrics.role]}">\${metrics.role}</span>\`;
+    }
+
     let html = \`
       <div class="sidebar-content">
         <div class="sidebar-section">
-          <h3>\${comp.name}</h3>
+          <h3>\${comp.name}\${roleHtml}</h3>
           <a class="file-link" data-path="\${comp.filePath}" data-line="\${comp.line}">
             \${fileName}:\${comp.line}
           </a>
@@ -1491,6 +1626,53 @@ function getScript(): string {
         <div class="sidebar-section">
           <h3>Props</h3>
           \${comp.props.map(p => \`<span class="tag tag-props">\${p.name}</span>\`).join('')}
+        </div>
+      \`;
+    }
+
+    // Add prop metrics visualization
+    if (metrics && metrics.totalPropsReceived > 0) {
+      const total = metrics.totalPropsReceived;
+      const consumedPct = (metrics.propsConsumed / total * 100).toFixed(0);
+      const passedPct = (metrics.propsPassed / total * 100).toFixed(0);
+      const transformedPct = (metrics.propsTransformed / total * 100).toFixed(0);
+      const ignoredPct = (metrics.propsIgnored / total * 100).toFixed(0);
+
+      html += \`
+        <div class="sidebar-section metrics-section">
+          <h3>Prop Usage</h3>
+          <div class="detail-row">
+            <span class="detail-label">Total Props</span>
+            <span class="detail-value">\${total}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Passthrough Ratio</span>
+            <span class="detail-value">\${(metrics.passthroughRatio * 100).toFixed(0)}%</span>
+          </div>
+          <div class="metrics-bar-container">
+            <div class="metrics-bar-segment metrics-bar-consumed" style="width: \${consumedPct}%"></div>
+            <div class="metrics-bar-segment metrics-bar-passed" style="width: \${passedPct}%"></div>
+            <div class="metrics-bar-segment metrics-bar-transformed" style="width: \${transformedPct}%"></div>
+            <div class="metrics-bar-segment metrics-bar-ignored" style="width: \${ignoredPct}%"></div>
+          </div>
+          <div class="metrics-legend">
+            <div class="metrics-legend-item">
+              <div class="metrics-legend-dot" style="background: var(--vscode-charts-green)"></div>
+              <span>Consumed (\${metrics.propsConsumed})</span>
+            </div>
+            <div class="metrics-legend-item">
+              <div class="metrics-legend-dot" style="background: var(--vscode-charts-yellow)"></div>
+              <span>Passed (\${metrics.propsPassed})</span>
+            </div>
+            <div class="metrics-legend-item">
+              <div class="metrics-legend-dot" style="background: var(--vscode-charts-blue)"></div>
+              <span>Transformed (\${metrics.propsTransformed})</span>
+            </div>
+            <div class="metrics-legend-item">
+              <div class="metrics-legend-dot" style="background: var(--vscode-charts-red)"></div>
+              <span>Ignored (\${metrics.propsIgnored})</span>
+            </div>
+          </div>
         </div>
       \`;
     }
@@ -1552,11 +1734,51 @@ function getScript(): string {
       drillingBadge = \`<span class="warning-badge">\${drillingCount} drilling</span>\`;
     }
 
+    // Count passthrough components
+    let passthroughBadge = '';
+    if (graphData.componentMetrics) {
+      const passthroughCount = graphData.componentMetrics.filter(m => m.role === 'passthrough').length;
+      if (passthroughCount > 0) {
+        passthroughBadge = \`<span class="passthrough-badge">\${passthroughCount} passthrough</span>\`;
+      }
+    }
+
+    // Count bundle warnings
+    let bundleBadge = '';
+    if (graphData.bundles) {
+      const largeBundles = graphData.bundles.filter(b => b.estimatedSize >= 5 || b.passedThrough.length >= 2).length;
+      if (largeBundles > 0) {
+        bundleBadge = \`<span class="bundle-badge">\${largeBundles} bundles</span>\`;
+      }
+    }
+
+    // Count context leaks
+    let leakBadge = '';
+    if (graphData.contextLeaks) {
+      const leakCount = graphData.contextLeaks.length;
+      if (leakCount > 0) {
+        leakBadge = \`<span class="leak-badge">\${leakCount} leaks</span>\`;
+      }
+    }
+
+    // Count prop renames
+    let renameBadge = '';
+    if (graphData.propChains) {
+      const complexChains = graphData.propChains.filter(c => c.depth >= 2).length;
+      if (complexChains > 0) {
+        renameBadge = \`<span class="rename-badge">\${complexChains} renames</span>\`;
+      }
+    }
+
     statsEl.innerHTML = \`
       <span>\${summaryData.components.totalComponents} components</span>
       <span>\${summaryData.state.totalStateNodes} state</span>
       <span>\${summaryData.flow.totalEdges} edges</span>
       \${drillingBadge}
+      \${passthroughBadge}
+      \${bundleBadge}
+      \${leakBadge}
+      \${renameBadge}
     \`;
   }
 

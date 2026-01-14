@@ -1,6 +1,6 @@
 {
   "name": "@react-state-map/core",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Core parsing and graph building for React state visualization",
   "license": "MIT",
   "author": "Olaf Glad",

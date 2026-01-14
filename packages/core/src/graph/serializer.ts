@@ -18,6 +18,10 @@ export function serializeGraph(graph: StateFlowGraph): SerializedStateFlowGraph 
     edges: graph.edges,
     contextBoundaries: graph.contextBoundaries,
     propDrillingPaths: graph.propDrillingPaths,
+    componentMetrics: graph.componentMetrics,
+    bundles: graph.bundles,
+    contextLeaks: graph.contextLeaks,
+    propChains: graph.propChains,
   };
 }
 
@@ -31,6 +35,10 @@ export function deserializeGraph(serialized: SerializedStateFlowGraph): StateFlo
     edges: serialized.edges,
     contextBoundaries: serialized.contextBoundaries,
     propDrillingPaths: serialized.propDrillingPaths,
+    componentMetrics: serialized.componentMetrics,
+    bundles: serialized.bundles,
+    contextLeaks: serialized.contextLeaks || [],
+    propChains: serialized.propChains || [],
   };
 }
 
