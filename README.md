@@ -11,6 +11,10 @@ React State Map analyzes your codebase and generates interactive diagrams showin
 - **State Flow Visualization**: See which components own state and how it propagates through props
 - **Context Boundaries**: Visualize React Context providers with clustered consumers
 - **Prop Drilling Detection**: Automatically detect props passed through too many layers
+- **Pass-Through Analysis**: Classify components as consumer, passthrough, transformer, or mixed
+- **Bundle Detection**: Warn about large object props (5+ properties) being passed through
+- **Context Leak Detection**: Find components that extract from useContext and re-pass as props
+- **Rename Tracking**: Track props through destructuring renames across components
 - **Directory Clustering**: Components automatically grouped by directory structure
 - **Collapsible Subtrees**: Collapse component subtrees to reduce visual complexity
 - **Click-to-Navigate**: Click any component to jump to its source code
@@ -52,6 +56,18 @@ npx @react-state-map/cli ./src
 | **Zustand** | `useStore`, `useXxxStore` patterns |
 | **Custom Hooks** | Any `useXxx` hook calls |
 
+## Anti-Pattern Detection
+
+React State Map automatically detects common anti-patterns and displays warning badges:
+
+| Badge | Detection | Description |
+|-------|-----------|-------------|
+| `N drilling` | Prop Drilling | Props passed through 3+ components without being used |
+| `N passthrough` | Pass-Through Components | Components that only forward props without consuming them |
+| `N bundles` | Large Prop Bundles | Object props with 5+ properties being passed through |
+| `N leaks` | Context Leaks | useContext values extracted and re-passed as props |
+| `N renames` | Prop Renames | Props renamed 2+ times through destructuring |
+
 ## Visualization Guide
 
 | Element | Meaning |
@@ -65,6 +81,7 @@ npx @react-state-map/cli ./src
 | ▼/▶ indicators | Expandable/collapsible nodes |
 | +N badge | Number of hidden children |
 | Red highlights | Prop drilling paths |
+| Role badges | consumer / passthrough / transformer / mixed |
 
 ## Use Cases
 

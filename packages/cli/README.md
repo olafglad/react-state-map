@@ -77,6 +77,16 @@ react-state-map ./src --include "**/*.tsx" --exclude "**/test/**"
 - **Collapsible Subtrees**: Click to collapse/expand component subtrees
 - **Prop Drilling Detection**: Automatically detect props passed through too many layers
 
+### Anti-Pattern Detection
+
+| Badge | Detection | Description |
+|-------|-----------|-------------|
+| `N drilling` | Prop Drilling | Props passed through 3+ components without being used |
+| `N passthrough` | Pass-Through Components | Components that only forward props without consuming them |
+| `N bundles` | Large Prop Bundles | Object props with 5+ properties being passed through |
+| `N leaks` | Context Leaks | useContext values extracted and re-passed as props |
+| `N renames` | Prop Renames | Props renamed 2+ times through destructuring |
+
 ## Output
 
 ### HTML (default)
@@ -91,6 +101,7 @@ Generates a standalone, interactive HTML file with:
 - **Purple boundaries** = Context provider scope
 - **▼/▶ indicators** = Collapsible nodes
 - **Red highlights** = Prop drilling paths
+- **Role badges** = consumer / passthrough / transformer / mixed
 
 Pan, zoom, collapse/expand nodes, click components for details, and switch between views.
 

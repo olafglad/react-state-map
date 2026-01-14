@@ -44,6 +44,10 @@ console.log(`Edges: ${summary.flow.totalEdges}`);
 - **Graph Building**: Constructs a complete dependency graph of state flow
 - **Prop Drilling Detection**: Identifies props passed through too many layers
 - **Context Boundaries**: Maps React Context provider/consumer relationships
+- **Pass-Through Analysis**: Classifies components as consumer, passthrough, transformer, or mixed
+- **Bundle Detection**: Identifies large object props (5+ properties) being passed through
+- **Context Leak Detection**: Finds components that extract from useContext and re-pass as props
+- **Rename Tracking**: Tracks props through destructuring renames across components
 
 ## For Most Users
 
