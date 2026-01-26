@@ -6,10 +6,9 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load dagre bundle at runtime
+// Load dagre bundle at runtime (kept for fallback)
 function getDagreBundle(): string {
   const bundlePath = path.join(__dirname, 'dagre.bundle.js');
-  // In development, look in src directory
   const srcBundlePath = path.join(__dirname, '..', '..', 'src', 'renderers', 'dagre.bundle.js');
 
   if (fs.existsSync(bundlePath)) {
@@ -18,9 +17,11 @@ function getDagreBundle(): string {
     return fs.readFileSync(srcBundlePath, 'utf-8');
   }
 
-  // Fallback: inline minimal dagre from CDN comment
-  return '/* dagre bundle not found - edge routing will use fallback */';
+  return '/* dagre bundle not found */';
 }
+
+// ELK CDN URL - load from CDN instead of embedding to avoid memory issues
+const ELK_CDN_URL = 'https://unpkg.com/elkjs@0.9.3/lib/elk.bundled.js';
 
 export function generateHTML(graph: SerializedStateFlowGraph): string {
   const graphJSON = JSON.stringify(graph);
@@ -109,10 +110,12 @@ ${getStyles()}
     </main>
     <div class="legend" id="legend"></div>
   </div>
+  <script src="${ELK_CDN_URL}"></script>
   <script>${dagreBundle}</script>
   <script>
 const graphData = ${graphJSON};
 const summaryData = ${summaryJSON};
+const USE_ELK = typeof ELK !== 'undefined';
 ${getScript()}
   </script>
 </body>
@@ -385,9 +388,9 @@ function getStyles(): string {
     }
 
     .edge-props-subtle {
-      stroke: #30363d;
-      stroke-width: 1;
-      opacity: 0.5;
+      stroke: #586069;
+      stroke-width: 1.5;
+      opacity: 0.7;
     }
 
     .edge-drilling {
@@ -574,24 +577,78 @@ function getScript(): string {
   let collapsedNodes = new Set();
   let currentClusters = new Map();
 
-  init();
+  // Context color palette - distinct, accessible colors
+  const CONTEXT_COLORS = [
+    { name: 'purple', fill: '#8957e5', light: '#bc8cff' },
+    { name: 'teal', fill: '#39d353', light: '#56d364' },
+    { name: 'orange', fill: '#d29922', light: '#e3b341' },
+    { name: 'pink', fill: '#db61a2', light: '#f778ba' },
+    { name: 'cyan', fill: '#33b3ae', light: '#79c0ff' },
+    { name: 'red', fill: '#f85149', light: '#ff7b72' },
+  ];
+  let contextColorMap = new Map(); // contextName -> color index
 
-  function init() {
+  // Assign colors to all contexts
+  function assignContextColors() {
+    contextColorMap.clear();
+    const contexts = new Set();
+    // Collect all unique context names
+    graphData.contextBoundaries.forEach(b => contexts.add(b.contextName));
+    graphData.edges.filter(e => e.mechanism === 'context').forEach(e => {
+      if (e.propName) contexts.add(e.propName);
+    });
+    // Also check component context providers/consumers
+    Object.values(graphData.components).forEach(comp => {
+      if (comp.contextProviders) {
+        comp.contextProviders.forEach(p => contexts.add(p.contextName));
+      }
+      if (comp.contextConsumers) {
+        comp.contextConsumers.forEach(c => contexts.add(c));
+      }
+    });
+    // Assign colors
+    let colorIndex = 0;
+    contexts.forEach(name => {
+      contextColorMap.set(name, colorIndex % CONTEXT_COLORS.length);
+      colorIndex++;
+    });
+  }
+
+  function getContextColor(contextName) {
+    const index = contextColorMap.get(contextName);
+    if (index !== undefined) {
+      return CONTEXT_COLORS[index];
+    }
+    return CONTEXT_COLORS[0]; // fallback to purple
+  }
+
+  // Initialize when ready - use requestAnimationFrame to ensure DOM layout is complete
+  requestAnimationFrame(() => {
+    init().catch(err => console.error('Init error:', err));
+  });
+
+  async function init() {
     setupEventListeners();
     processGraph();
+    assignContextColors();
     updateStats();
     updateLegend();
-    render();
+    await render();
+    // Force a second fitToView after render to ensure proper positioning
+    requestAnimationFrame(() => {
+      fitToView();
+      updateTransform();
+    });
   }
 
   function setupEventListeners() {
     tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
+      tab.addEventListener('click', async () => {
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         currentView = tab.dataset.view;
         updateLegend();
-        render();
+        await render();
       });
     });
 
@@ -718,25 +775,118 @@ function getScript(): string {
   }
 
   // Toggle collapse state for a node
-  function toggleCollapse(nodeId) {
+  async function toggleCollapse(nodeId) {
     if (collapsedNodes.has(nodeId)) {
       collapsedNodes.delete(nodeId);
     } else {
       collapsedNodes.add(nodeId);
     }
-    render();
+    await render();
   }
 
-  // Basic dagre layout (used as default)
+  // ELK layout options
+  const elkOptions = {
+    'elk.algorithm': 'layered',
+    'elk.direction': 'DOWN',
+    'elk.layered.spacing.nodeNodeBetweenLayers': '100',
+    'elk.spacing.nodeNode': '60',
+    'elk.padding': '[left=40, top=40, right=40, bottom=40]',
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+    'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+  };
+
+  // Store ELK edge points for drawing
+  let elkEdgePoints = new Map();
+
+  // Basic layout (uses ELK if available, falls back to Dagre)
   function layoutNodes() {
     if (nodes.length === 0) return;
 
-    if (typeof dagre === 'undefined') {
-      // Fallback to simple layout if dagre not available
+    if (USE_ELK) {
+      layoutNodesElk();
+    } else if (typeof dagre !== 'undefined') {
+      layoutNodesDagre();
+    } else {
       layoutNodesFallback();
-      return;
     }
+  }
 
+  // ELK layout (async)
+  async function layoutNodesElk() {
+    const elk = new ELK.default();
+
+    // Build ELK graph
+    const elkChildren = nodes.map(node => ({
+      id: node.id,
+      width: getNodeWidth(node),
+      height: 40,
+      labels: [{ text: node.name }],
+    }));
+
+    const elkEdges = graphData.edges
+      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
+      .filter(e => nodes.some(n => n.id === e.from) && nodes.some(n => n.id === e.to))
+      .map((edge, i) => ({
+        id: 'e' + i,
+        sources: [edge.from],
+        targets: [edge.to],
+      }));
+
+    const elkGraph = {
+      id: 'root',
+      layoutOptions: elkOptions,
+      children: elkChildren,
+      edges: elkEdges,
+    };
+
+    try {
+      const result = await elk.layout(elkGraph);
+
+      // Extract node positions
+      if (result.children) {
+        for (const child of result.children) {
+          const node = nodes.find(n => n.id === child.id);
+          if (node) {
+            node.x = (child.x || 0) + (child.width || 0) / 2;
+            node.y = (child.y || 0) + (child.height || 0) / 2;
+          }
+        }
+      }
+
+      // Extract edge points
+      elkEdgePoints = new Map();
+      if (result.edges) {
+        for (const edge of result.edges) {
+          if (edge.sections) {
+            const points = [];
+            for (const section of edge.sections) {
+              if (section.startPoint) points.push(section.startPoint);
+              if (section.bendPoints) points.push(...section.bendPoints);
+              if (section.endPoint) points.push(section.endPoint);
+            }
+            // Map back to original edge
+            const origEdge = graphData.edges.find(e =>
+              edge.sources.includes(e.from) && edge.targets.includes(e.to)
+            );
+            if (origEdge) {
+              elkEdgePoints.set(origEdge.from + '->' + origEdge.to, points);
+            }
+          }
+        }
+      }
+
+      currentClusters = new Map();
+      fitToView();
+      updateTransform();
+    } catch (error) {
+      console.error('ELK layout error:', error);
+      layoutNodesFallback();
+    }
+  }
+
+  // Dagre layout (synchronous, fallback)
+  function layoutNodesDagre() {
     dagreGraph = new dagre.graphlib.Graph({ compound: true });
     dagreGraph.setGraph({
       rankdir: 'TB',
@@ -748,7 +898,6 @@ function getScript(): string {
     });
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    // Add nodes with dimensions
     nodes.forEach(node => {
       dagreGraph.setNode(node.id, {
         label: node.name,
@@ -757,7 +906,6 @@ function getScript(): string {
       });
     });
 
-    // Add edges for layout calculation
     graphData.edges
       .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
       .forEach(edge => {
@@ -766,10 +914,8 @@ function getScript(): string {
         }
       });
 
-    // Run dagre layout
     dagre.layout(dagreGraph);
 
-    // Extract positions
     nodes.forEach(node => {
       const dagreNode = dagreGraph.node(node.id);
       if (dagreNode) {
@@ -806,15 +952,189 @@ function getScript(): string {
     fitToView();
   }
 
-  // Layout with clustering support
-  function layoutWithClustering(getClusterForNode) {
+  // Layout with clustering support (uses ELK compound nodes or Dagre)
+  async function layoutWithClustering(getClusterForNode) {
     if (nodes.length === 0) return new Map();
 
-    if (typeof dagre === 'undefined') {
+    // Identify clusters first
+    const clusters = new Map();
+    nodes.forEach(node => {
+      const clusterId = getClusterForNode(node);
+      if (clusterId) {
+        if (!clusters.has(clusterId)) clusters.set(clusterId, []);
+        clusters.get(clusterId).push(node);
+      }
+    });
+
+    if (USE_ELK) {
+      await layoutWithClusteringElk(clusters);
+    } else if (typeof dagre !== 'undefined') {
+      layoutWithClusteringDagre(getClusterForNode, clusters);
+    } else {
       layoutNodesFallback();
-      return new Map();
     }
 
+    return clusters;
+  }
+
+  // ELK layout with compound nodes (async)
+  async function layoutWithClusteringElk(clusters) {
+    const elk = new ELK.default();
+    const processedNodes = new Set();
+
+    // Build ELK graph with compound nodes for clusters
+    const elkChildren = [];
+
+    // Add cluster compound nodes with their children
+    clusters.forEach((clusterNodes, clusterId) => {
+      const children = clusterNodes.map(node => {
+        processedNodes.add(node.id);
+        return {
+          id: node.id,
+          width: getNodeWidth(node),
+          height: 40,
+          labels: [{ text: node.name }],
+        };
+      });
+
+      elkChildren.push({
+        id: clusterId,
+        labels: [{ text: clusterId.replace(/^(ctx:|dir:)/, '') }],
+        children: children,
+        layoutOptions: {
+          'elk.padding': '[left=20, top=35, right=20, bottom=20]',
+        },
+      });
+    });
+
+    // Add unclustered nodes
+    nodes.forEach(node => {
+      if (!processedNodes.has(node.id)) {
+        elkChildren.push({
+          id: node.id,
+          width: getNodeWidth(node),
+          height: 40,
+          labels: [{ text: node.name }],
+        });
+      }
+    });
+
+    // Build edges
+    const elkEdges = graphData.edges
+      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
+      .filter(e => nodes.some(n => n.id === e.from) && nodes.some(n => n.id === e.to))
+      .map((edge, i) => ({
+        id: 'e' + i,
+        sources: [edge.from],
+        targets: [edge.to],
+      }));
+
+    const elkGraph = {
+      id: 'root',
+      layoutOptions: elkOptions,
+      children: elkChildren,
+      edges: elkEdges,
+    };
+
+    try {
+      const result = await elk.layout(elkGraph);
+
+      // Extract positions recursively
+      elkEdgePoints = new Map();
+
+      function processElkChildren(children, offsetX = 0, offsetY = 0) {
+        for (const child of children) {
+          const x = (child.x || 0) + offsetX;
+          const y = (child.y || 0) + offsetY;
+
+          if (child.children && child.children.length > 0) {
+            // This is a cluster - store its bounds
+            const clusterData = currentClusters.get(child.id);
+            if (clusterData) {
+              // Store cluster bounds for drawing
+              child._bounds = { x, y, width: child.width, height: child.height };
+            }
+            // Process children with offset
+            processElkChildren(child.children, x, y);
+          } else {
+            // Regular node
+            const node = nodes.find(n => n.id === child.id);
+            if (node) {
+              node.x = x + (child.width || 0) / 2;
+              node.y = y + (child.height || 0) / 2;
+            }
+          }
+        }
+      }
+
+      if (result.children) {
+        processElkChildren(result.children);
+
+        // Store cluster bounds for drawing boundaries
+        for (const child of result.children) {
+          if (child.children && child.children.length > 0) {
+            const existing = clusters.get(child.id);
+            if (existing) {
+              existing._elkBounds = {
+                x: child.x || 0,
+                y: child.y || 0,
+                width: child.width || 0,
+                height: child.height || 0,
+              };
+            }
+          }
+        }
+      }
+
+      // Extract edge points
+      function extractEdgePoints(container, offsetX = 0, offsetY = 0) {
+        if (container.edges) {
+          for (const edge of container.edges) {
+            if (edge.sections) {
+              const points = [];
+              for (const section of edge.sections) {
+                if (section.startPoint) {
+                  points.push({ x: section.startPoint.x + offsetX, y: section.startPoint.y + offsetY });
+                }
+                if (section.bendPoints) {
+                  for (const bp of section.bendPoints) {
+                    points.push({ x: bp.x + offsetX, y: bp.y + offsetY });
+                  }
+                }
+                if (section.endPoint) {
+                  points.push({ x: section.endPoint.x + offsetX, y: section.endPoint.y + offsetY });
+                }
+              }
+              const origEdge = graphData.edges.find(e =>
+                edge.sources.includes(e.from) && edge.targets.includes(e.to)
+              );
+              if (origEdge) {
+                elkEdgePoints.set(origEdge.from + '->' + origEdge.to, points);
+              }
+            }
+          }
+        }
+        if (container.children) {
+          for (const child of container.children) {
+            if (child.children) {
+              extractEdgePoints(child, offsetX + (child.x || 0), offsetY + (child.y || 0));
+            }
+          }
+        }
+      }
+      extractEdgePoints(result);
+
+      currentClusters = clusters;
+      fitToView();
+      updateTransform();
+    } catch (error) {
+      console.error('ELK clustering layout error:', error);
+      layoutNodesFallback();
+    }
+  }
+
+  // Dagre layout with clustering (synchronous, fallback)
+  function layoutWithClusteringDagre(getClusterForNode, clusters) {
     dagreGraph = new dagre.graphlib.Graph({ compound: true });
     dagreGraph.setGraph({
       rankdir: 'TB',
@@ -825,16 +1145,6 @@ function getScript(): string {
       ranker: 'network-simplex'
     });
     dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-    // Identify clusters
-    const clusters = new Map();
-    nodes.forEach(node => {
-      const clusterId = getClusterForNode(node);
-      if (clusterId) {
-        if (!clusters.has(clusterId)) clusters.set(clusterId, []);
-        clusters.get(clusterId).push(node);
-      }
-    });
 
     // Add cluster subgraphs to dagre
     clusters.forEach((clusterNodes, clusterId) => {
@@ -879,11 +1189,10 @@ function getScript(): string {
 
     currentClusters = clusters;
     fitToView();
-    return clusters;
   }
 
   // Layout for State Flow view - directory-based clustering
-  function layoutForStateFlow() {
+  async function layoutForStateFlow() {
     const getDirectoryCluster = (node) => {
       if (!node.data.filePath) return null;
       const parts = node.data.filePath.split('/');
@@ -897,11 +1206,11 @@ function getScript(): string {
       return parts.length > 1 ? 'dir:' + parts[parts.length - 2] : null;
     };
 
-    return layoutWithClustering(getDirectoryCluster);
+    return await layoutWithClustering(getDirectoryCluster);
   }
 
   // Layout for Context view - context boundary clustering
-  function layoutForContextView() {
+  async function layoutForContextView() {
     const getContextCluster = (node) => {
       // Provider nodes create their own cluster
       for (const boundary of graphData.contextBoundaries) {
@@ -918,7 +1227,7 @@ function getScript(): string {
       return null;
     };
 
-    return layoutWithClustering(getContextCluster);
+    return await layoutWithClustering(getContextCluster);
   }
 
   // Draw cluster boundary helper
@@ -994,7 +1303,7 @@ function getScript(): string {
     }
   }
 
-  function render() {
+  async function render() {
     svg.innerHTML = '';
 
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -1008,10 +1317,10 @@ function getScript(): string {
 
     switch (currentView) {
       case 'flow':
-        renderFlowView(g);
+        await renderFlowView(g);
         break;
       case 'context':
-        renderContextView(g);
+        await renderContextView(g);
         break;
       case 'drilling':
         renderDrillingView(g);
@@ -1031,9 +1340,9 @@ function getScript(): string {
     \`;
   }
 
-  function renderFlowView(g) {
+  async function renderFlowView(g) {
     // Layout with directory clustering
-    const clusters = layoutForStateFlow();
+    const clusters = await layoutForStateFlow();
 
     // Draw cluster boundaries (directories)
     clusters.forEach((clusterNodes, clusterId) => {
@@ -1061,71 +1370,45 @@ function getScript(): string {
     getVisibleNodes().forEach(node => drawNode(g, node));
   }
 
-  function renderContextView(g) {
+  async function renderContextView(g) {
     // Layout with context boundary clustering
-    const clusters = layoutForContextView();
+    const clusters = await layoutForContextView();
 
-    // Draw context boundaries from dagre cluster positions
-    clusters.forEach((clusterNodes, clusterId) => {
-      if (!clusterId.startsWith('ctx:')) return;
-      const clusterInfo = dagreGraph ? dagreGraph.node(clusterId) : null;
-      if (clusterInfo && clusterInfo.width && clusterInfo.height) {
-        // Draw context boundary using cluster info
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 20);
-        rect.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 25);
-        rect.setAttribute('width', clusterInfo.width + 40);
-        rect.setAttribute('height', clusterInfo.height + 45);
-        rect.setAttribute('rx', 8);
-        rect.setAttribute('class', 'context-boundary');
+    // Add context-colored arrow markers
+    addContextArrowMarkers(g);
 
-        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 10);
-        label.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 8);
-        label.setAttribute('fill', '#bc8cff');
-        label.setAttribute('font-size', '11');
-        label.setAttribute('font-weight', '500');
-        label.textContent = clusterId.replace('ctx:', '') + '.Provider';
+    // Draw context boundaries with context-specific colors
+    graphData.contextBoundaries.forEach((boundary, index) => {
+      const contextColor = getContextColor(boundary.contextName);
+      const provider = nodes.find(n => n.id === boundary.providerComponent);
+      const consumers = boundary.childComponents
+        .map(id => nodes.find(n => n.id === id))
+        .filter(n => n !== undefined);
 
-        g.insertBefore(label, g.firstChild);
-        g.insertBefore(rect, g.firstChild);
-      }
-    });
-
-    // Fallback: if no clusters were rendered, use the old boundary drawing method
-    if (clusters.size === 0 && graphData.contextBoundaries.length > 0) {
-      const total = graphData.contextBoundaries.length;
-
-      function normalizeContextName(name) {
-        return name.toLowerCase()
+      if (provider) {
+        // Find additional consumers that use this context
+        const normalizedBoundaryName = boundary.contextName.toLowerCase()
           .replace(/context$/i, '')
           .replace(/provider$/i, '')
           .replace(/consumer$/i, '');
-      }
 
-      graphData.contextBoundaries.forEach((boundary, index) => {
-        const provider = nodes.find(n => n.id === boundary.providerComponent);
-        const consumers = boundary.childComponents
-          .map(id => nodes.find(n => n.id === id))
-          .filter(n => n !== undefined);
-
-        if (provider) {
-          const normalizedBoundaryName = normalizeContextName(boundary.contextName);
-          const contextConsumers = nodes.filter(n => {
-            if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
-            return n.data.contextConsumers.some(consumerContext => {
-              const normalizedConsumer = normalizeContextName(consumerContext);
-              return consumerContext === boundary.contextName ||
-                     normalizedConsumer === normalizedBoundaryName ||
-                     normalizedConsumer.includes(normalizedBoundaryName) ||
-                     normalizedBoundaryName.includes(normalizedConsumer);
-            });
+        const contextConsumers = nodes.filter(n => {
+          if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
+          return n.data.contextConsumers.some(consumerContext => {
+            const normalizedConsumer = consumerContext.toLowerCase()
+              .replace(/context$/i, '')
+              .replace(/provider$/i, '')
+              .replace(/consumer$/i, '');
+            return consumerContext === boundary.contextName ||
+                   normalizedConsumer === normalizedBoundaryName ||
+                   normalizedConsumer.includes(normalizedBoundaryName) ||
+                   normalizedBoundaryName.includes(normalizedConsumer);
           });
-          const allConsumers = [...new Set([...consumers, ...contextConsumers])];
-          drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
-        }
-      });
-    }
+        });
+        const allConsumers = [...new Set([...consumers, ...contextConsumers])];
+        drawContextBoundaryColored(g, provider, allConsumers, boundary.contextName, contextColor, index);
+      }
+    });
 
     // Draw props edges first (subtle, in background) to show component hierarchy
     graphData.edges
@@ -1138,58 +1421,322 @@ function getScript(): string {
         }
       });
 
-    // Draw context edges (only for visible nodes)
+    // Draw context edges with context-specific colors
     graphData.edges
       .filter(e => e.mechanism === 'context')
       .forEach(edge => {
         const source = nodes.find(n => n.id === edge.from);
         const target = nodes.find(n => n.id === edge.to);
         if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
-          drawEdge(g, source, target, edge);
+          // Determine which context this edge belongs to
+          let contextName = edge.propName; // propName often contains context name
+          if (!contextName && source.data.contextProviders) {
+            // Get first context the source provides
+            contextName = source.data.contextProviders[0]?.contextName;
+          }
+          const contextColor = contextName ? getContextColor(contextName) : CONTEXT_COLORS[0];
+          drawContextEdge(g, source, target, contextColor);
         }
       });
 
-    // Draw visible nodes with purple border for providers
+    // Draw visible nodes with context-colored borders for providers
     getVisibleNodes().forEach(node => {
-      const isProvider = node.data.contextProviders && node.data.contextProviders.length > 0;
-      drawNode(g, node, isProvider ? '#8957e5' : null);
+      const providers = node.data.contextProviders || [];
+      if (providers.length > 0) {
+        // Get colors for all contexts this node provides
+        const borderColors = providers.map(p => getContextColor(p.contextName).fill);
+        drawNodeWithMultipleBorders(g, node, borderColors);
+      } else {
+        drawNode(g, node, null);
+      }
     });
+  }
+
+  // Add arrow markers for each context color
+  function addContextArrowMarkers(g) {
+    if (g.querySelector('#arrow-ctx-0')) return; // Already added
+
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    let markersHtml = '';
+    CONTEXT_COLORS.forEach((color, index) => {
+      markersHtml += \`
+        <marker id="arrow-ctx-\${index}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,10 L10,5 z" fill="\${color.fill}" />
+        </marker>
+      \`;
+    });
+    defs.innerHTML = markersHtml;
+    g.appendChild(defs);
+  }
+
+  // Draw context edge with specific color
+  function drawContextEdge(g, source, target, contextColor) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const nodeHalfHeight = 16;
+    const sourceHalfWidth = getNodeWidth(source) / 2;
+    const targetHalfWidth = getNodeWidth(target) / 2;
+
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+
+    let startX, startY, endX, endY;
+
+    if (Math.abs(dy) > Math.abs(dx) * 0.5) {
+      if (dy > 0) {
+        startX = source.x;
+        startY = source.y + nodeHalfHeight;
+        endX = target.x;
+        endY = target.y - nodeHalfHeight;
+      } else {
+        startX = source.x;
+        startY = source.y - nodeHalfHeight;
+        endX = target.x;
+        endY = target.y + nodeHalfHeight;
+      }
+    } else {
+      if (dx > 0) {
+        startX = source.x + sourceHalfWidth;
+        startY = source.y;
+        endX = target.x - targetHalfWidth;
+        endY = target.y;
+      } else {
+        startX = source.x - sourceHalfWidth;
+        startY = source.y;
+        endX = target.x + targetHalfWidth;
+        endY = target.y;
+      }
+    }
+
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+
+    let d;
+    if (Math.abs(dy) > Math.abs(dx) * 0.5) {
+      d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
+    } else {
+      d = \`M\${startX},\${startY} C\${midX},\${startY} \${midX},\${endY} \${endX},\${endY}\`;
+    }
+
+    path.setAttribute('d', d);
+    path.setAttribute('stroke', contextColor.fill);
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-dasharray', '5, 5');
+    path.setAttribute('fill', 'none');
+
+    const colorIndex = CONTEXT_COLORS.indexOf(contextColor);
+    path.setAttribute('marker-end', \`url(#arrow-ctx-\${colorIndex})\`);
+
+    g.insertBefore(path, g.firstChild);
+  }
+
+  // Draw context boundary with specific color
+  function drawContextBoundaryColored(g, provider, consumers, contextName, contextColor, index) {
+    const allNodes = [provider, ...consumers].filter(n => n !== undefined);
+    if (allNodes.length === 0) return;
+
+    const basePadding = 40;
+    const offset = index * 25; // More offset for nested boundaries to avoid overlap
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    allNodes.forEach(n => {
+      const nodeWidth = getNodeWidth(n);
+      minX = Math.min(minX, n.x - nodeWidth / 2);
+      maxX = Math.max(maxX, n.x + nodeWidth / 2);
+      minY = Math.min(minY, n.y - 20);
+      maxY = Math.max(maxY, n.y + 20);
+    });
+
+    minX = minX - basePadding - offset;
+    minY = minY - basePadding - offset - 20; // Extra space at top for label
+    maxX = maxX + basePadding + offset;
+    maxY = maxY + basePadding + offset;
+
+    const rectX = minX;
+    const rectY = minY;
+    const rectWidth = maxX - minX;
+    const rectHeight = maxY - minY;
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', rectX);
+    rect.setAttribute('y', rectY);
+    rect.setAttribute('width', rectWidth);
+    rect.setAttribute('height', rectHeight);
+    rect.setAttribute('rx', 8);
+    rect.setAttribute('fill', contextColor.fill + '08'); // 8% opacity - more subtle
+    rect.setAttribute('stroke', contextColor.fill);
+    rect.setAttribute('stroke-width', '2');
+    rect.setAttribute('stroke-dasharray', '8, 4');
+    rect.setAttribute('pointer-events', 'none'); // Don't block clicks
+
+    // Position label at top-left corner, outside the boundary
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', rectX + 8);
+    label.setAttribute('y', rectY - 6);
+    label.setAttribute('fill', contextColor.light);
+    label.setAttribute('font-size', '11');
+    label.setAttribute('font-weight', '500');
+    label.textContent = contextName + '.Provider';
+
+    // Label background
+    const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    const labelWidth = contextName.length * 7 + 60;
+    labelBg.setAttribute('x', rectX + 4);
+    labelBg.setAttribute('y', rectY - 20);
+    labelBg.setAttribute('width', labelWidth);
+    labelBg.setAttribute('height', 18);
+    labelBg.setAttribute('fill', '#0d1117');
+    labelBg.setAttribute('rx', '3');
+    labelBg.setAttribute('pointer-events', 'none');
+
+    // Insert in correct order: rect at back, then label bg, then label
+    g.insertBefore(label, g.firstChild);
+    g.insertBefore(labelBg, g.firstChild);
+    g.insertBefore(rect, g.firstChild);
+  }
+
+  // Draw node with multiple colored borders (for multiple context providers)
+  function drawNodeWithMultipleBorders(g, node, borderColors) {
+    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    group.setAttribute('class', 'node');
+    group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
+
+    const width = getNodeWidth(node);
+    const height = 32;
+
+    // Draw border rings for each context (outer to inner)
+    borderColors.forEach((color, i) => {
+      const borderRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      const offset = (borderColors.length - 1 - i) * 3;
+      borderRect.setAttribute('x', -width / 2 - offset - 2);
+      borderRect.setAttribute('y', -height / 2 - offset - 2);
+      borderRect.setAttribute('width', width + (offset + 2) * 2);
+      borderRect.setAttribute('height', height + (offset + 2) * 2);
+      borderRect.setAttribute('rx', 6);
+      borderRect.setAttribute('fill', 'none');
+      borderRect.setAttribute('stroke', color);
+      borderRect.setAttribute('stroke-width', '2');
+      group.appendChild(borderRect);
+    });
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', -width / 2);
+    rect.setAttribute('y', -height / 2);
+    rect.setAttribute('width', width);
+    rect.setAttribute('height', height);
+    rect.setAttribute('rx', 4);
+    rect.setAttribute('class', \`node-rect \${node.hasState ? 'node-component-state' : 'node-component'}\`);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('class', 'node-label');
+    text.textContent = node.name;
+
+    group.appendChild(rect);
+    group.appendChild(text);
+
+    // Add collapse indicator if node has children
+    const hasChildren = graphData.edges.some(e =>
+      e.from === node.id && e.mechanism === 'props'
+    );
+
+    if (hasChildren) {
+      const isCollapsed = collapsedNodes.has(node.id);
+      const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      indicator.setAttribute('x', width / 2 - 14);
+      indicator.setAttribute('y', 4);
+      indicator.setAttribute('fill', '#8b949e');
+      indicator.setAttribute('font-size', '12');
+      indicator.setAttribute('class', 'collapse-indicator');
+      indicator.textContent = isCollapsed ? '\\u25B6' : '\\u25BC';
+
+      indicator.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleCollapse(node.id);
+      });
+      group.appendChild(indicator);
+
+      if (isCollapsed) {
+        const count = getDescendants(node.id).size;
+        if (count > 0) {
+          const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          badge.setAttribute('x', width / 2 + 6);
+          badge.setAttribute('y', -10);
+          badge.setAttribute('fill', '#f0883e');
+          badge.setAttribute('font-size', '10');
+          badge.textContent = '+' + count;
+          group.appendChild(badge);
+        }
+      }
+    }
+
+    group.addEventListener('click', () => showNodeDetails(node));
+    g.appendChild(group);
   }
 
   // Draw subtle edge for showing hierarchy in context view
   function drawEdgeSubtle(g, source, target) {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const nodeHeight = 20;
+    const nodeHalfHeight = 16;
+    const sourceHalfWidth = getNodeWidth(source) / 2;
+    const targetHalfWidth = getNodeWidth(target) / 2;
 
     const dx = target.x - source.x;
     const dy = target.y - source.y;
 
-    let startX = source.x;
-    let startY = source.y + nodeHeight;
-    let endX = target.x;
-    let endY = target.y - nodeHeight;
+    let startX, startY, endX, endY;
 
-    if (dy < 0) {
-      startY = source.y - nodeHeight;
-      endY = target.y + nodeHeight;
+    if (Math.abs(dy) > Math.abs(dx) * 0.5) {
+      // Primarily vertical
+      if (dy > 0) {
+        startX = source.x;
+        startY = source.y + nodeHalfHeight;
+        endX = target.x;
+        endY = target.y - nodeHalfHeight;
+      } else {
+        startX = source.x;
+        startY = source.y - nodeHalfHeight;
+        endX = target.x;
+        endY = target.y + nodeHalfHeight;
+      }
+    } else {
+      // Primarily horizontal
+      if (dx > 0) {
+        startX = source.x + sourceHalfWidth;
+        startY = source.y;
+        endX = target.x - targetHalfWidth;
+        endY = target.y;
+      } else {
+        startX = source.x - sourceHalfWidth;
+        startY = source.y;
+        endX = target.x + targetHalfWidth;
+        endY = target.y;
+      }
     }
 
-    const sourceWidth = getNodeWidth(source) / 2;
-    const targetWidth = getNodeWidth(target) / 2;
-
-    if (Math.abs(dx) > Math.abs(dy) * 2) {
-      startY = source.y;
-      endY = target.y;
-      startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
-      endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
-    }
-
+    const midX = (startX + endX) / 2;
     const midY = (startY + endY) / 2;
-    const d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
+
+    let d;
+    if (Math.abs(dy) > Math.abs(dx) * 0.5) {
+      d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
+    } else {
+      d = \`M\${startX},\${startY} C\${midX},\${startY} \${midX},\${endY} \${endX},\${endY}\`;
+    }
 
     path.setAttribute('d', d);
     path.setAttribute('class', 'edge edge-props-subtle');
     path.setAttribute('fill', 'none');
+
+    // Add subtle arrow marker if not exists
+    if (!g.querySelector('#arrow-subtle')) {
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      defs.innerHTML = \`
+        <marker id="arrow-subtle" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L6,3 z" fill="#586069" opacity="0.7" />
+        </marker>
+      \`;
+      g.appendChild(defs);
+    }
+    path.setAttribute('marker-end', 'url(#arrow-subtle)');
 
     g.insertBefore(path, g.firstChild);
   }
@@ -1401,69 +1948,73 @@ function getScript(): string {
     if (!g.querySelector('#arrow-green')) {
       const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
       defs.innerHTML = \`
-        <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L8,3 z" fill="#3fb950" />
+        <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,10 L10,5 z" fill="#3fb950" />
         </marker>
-        <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L8,3 z" fill="#8957e5" />
+        <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,10 L10,5 z" fill="#8957e5" />
         </marker>
       \`;
       g.appendChild(defs);
     }
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const nodeHeight = 20;
-    const sourceWidth = getNodeWidth(source) / 2;
-    const targetWidth = getNodeWidth(target) / 2;
 
-    let d;
+    // Use actual node dimensions (nodes are drawn with height=32, so half=16)
+    const nodeHalfHeight = 16;
+    const sourceHalfWidth = getNodeWidth(source) / 2;
+    const targetHalfWidth = getNodeWidth(target) / 2;
 
-    // Try to use dagre's calculated edge path if available
-    if (dagreGraph) {
-      const dagreEdge = dagreGraph.edge(source.id, target.id);
-      if (dagreEdge && dagreEdge.points && dagreEdge.points.length > 0) {
-        const points = dagreEdge.points;
-        d = 'M' + points[0].x + ',' + points[0].y;
+    // Always calculate edge path based on actual node positions for reliability
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
 
-        if (points.length === 2) {
-          d += ' L' + points[1].x + ',' + points[1].y;
-        } else if (points.length >= 3) {
-          for (let i = 1; i < points.length - 1; i++) {
-            const p0 = points[i - 1];
-            const p1 = points[i];
-            const p2 = points[i + 1];
-            d += ' Q' + p1.x + ',' + p1.y + ' ' +
-              ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
-          }
-          d += ' L' + points[points.length - 1].x + ',' + points[points.length - 1].y;
-        }
+    let startX, startY, endX, endY;
+
+    // Determine connection points based on relative positions
+    if (Math.abs(dy) > Math.abs(dx) * 0.5) {
+      // Primarily vertical - connect top/bottom
+      if (dy > 0) {
+        // Target is below source
+        startX = source.x;
+        startY = source.y + nodeHalfHeight;
+        endX = target.x;
+        endY = target.y - nodeHalfHeight;
+      } else {
+        // Target is above source
+        startX = source.x;
+        startY = source.y - nodeHalfHeight;
+        endX = target.x;
+        endY = target.y + nodeHalfHeight;
+      }
+    } else {
+      // Primarily horizontal - connect left/right
+      if (dx > 0) {
+        // Target is to the right
+        startX = source.x + sourceHalfWidth;
+        startY = source.y;
+        endX = target.x - targetHalfWidth;
+        endY = target.y;
+      } else {
+        // Target is to the left
+        startX = source.x - sourceHalfWidth;
+        startY = source.y;
+        endX = target.x + targetHalfWidth;
+        endY = target.y;
       }
     }
 
-    // Fallback if dagre path not available
-    if (!d) {
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
+    // Create smooth bezier curve
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
 
-      let startX = source.x;
-      let startY = source.y + nodeHeight;
-      let endX = target.x;
-      let endY = target.y - nodeHeight;
-
-      if (dy < 0) {
-        startY = source.y - nodeHeight;
-        endY = target.y + nodeHeight;
-      }
-
-      if (Math.abs(dx) > Math.abs(dy) * 2) {
-        startY = source.y;
-        endY = target.y;
-        startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
-        endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
-      }
-
-      const midY = (startY + endY) / 2;
+    let d;
+    if (Math.abs(dy) > Math.abs(dx) * 0.5) {
+      // Vertical connection - use vertical bezier
       d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
+    } else {
+      // Horizontal connection - use horizontal bezier
+      d = \`M\${startX},\${startY} C\${midX},\${startY} \${midX},\${endY} \${endX},\${endY}\`;
     }
 
     path.setAttribute('d', d);
@@ -1607,7 +2158,10 @@ function getScript(): string {
       html += \`
         <div class="sidebar-section">
           <h3>Provides Context</h3>
-          \${comp.contextProviders.map(c => \`<span class="tag tag-context">\${c.contextName}</span>\`).join('')}
+          \${comp.contextProviders.map(c => {
+            const color = getContextColor(c.contextName);
+            return \`<span class="tag" style="background: \${color.fill}; color: white;">\${c.contextName}</span>\`;
+          }).join('')}
         </div>
       \`;
     }
@@ -1616,7 +2170,10 @@ function getScript(): string {
       html += \`
         <div class="sidebar-section">
           <h3>Consumes Context</h3>
-          \${comp.contextConsumers.map(c => \`<span class="tag tag-context">\${c}</span>\`).join('')}
+          \${comp.contextConsumers.map(c => {
+            const color = getContextColor(c);
+            return \`<span class="tag" style="background: \${color.fill}; color: white;">\${c}</span>\`;
+          }).join('')}
         </div>
       \`;
     }
@@ -1731,6 +2288,33 @@ function getScript(): string {
         </div>
       \`;
     } else if (currentView === 'context') {
+      // Build dynamic legend showing each context with its color
+      let contextLegendItems = '';
+      contextColorMap.forEach((colorIndex, contextName) => {
+        const color = CONTEXT_COLORS[colorIndex];
+        // Shorten long context names for legend
+        const shortName = contextName.replace(/Context$/i, '').replace(/Provider$/i, '');
+        contextLegendItems += \`
+          <div class="legend-item">
+            <svg width="20" height="12">
+              <rect x="0" y="1" width="10" height="10" rx="2" fill="none" stroke="\${color.fill}" stroke-width="2"/>
+              <line x1="12" y1="6" x2="20" y2="6" stroke="\${color.fill}" stroke-width="2" stroke-dasharray="3,2"/>
+            </svg>
+            <span>\${shortName}</span>
+          </div>
+        \`;
+      });
+
+      // Fallback if no contexts found
+      if (contextLegendItems === '') {
+        contextLegendItems = \`
+          <div class="legend-item">
+            <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="#8957e5" stroke-width="2" stroke-dasharray="4,2"/></svg>
+            <span>Context Flow</span>
+          </div>
+        \`;
+      }
+
       legendEl.innerHTML = \`
         <div class="legend-item">
           <div class="legend-color" style="background: #238636"></div>
@@ -1740,14 +2324,7 @@ function getScript(): string {
           <div class="legend-color" style="background: #1f6feb"></div>
           <span>Has State</span>
         </div>
-        <div class="legend-item">
-          <div class="legend-color" style="background: #8957e5; border: 2px solid #8957e5;"></div>
-          <span>Context Provider</span>
-        </div>
-        <div class="legend-item">
-          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="#8957e5" stroke-width="2" stroke-dasharray="4,2"/></svg>
-          <span>Context Flow</span>
-        </div>
+        \${contextLegendItems}
       \`;
     } else {
       legendEl.innerHTML = \`

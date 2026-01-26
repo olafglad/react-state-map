@@ -15,7 +15,7 @@
   },
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc && cp src/renderers/dagre.bundle.js dist/renderers/",
+    "build": "tsc && cp src/renderers/dagre.bundle.js src/renderers/elk.bundle.js dist/renderers/",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "start": "node dist/index.js"

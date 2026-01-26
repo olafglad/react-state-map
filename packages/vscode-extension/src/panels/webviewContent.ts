@@ -1,6 +1,8 @@
 import type { SerializedStateFlowGraph, GraphSummary, ParseWarning } from '@react-state-map/core';
 // @ts-ignore - esbuild imports this as text
 import dagreBundleCode from './dagre.bundle.js';
+// @ts-ignore - esbuild imports this as text
+import elkBundleCode from './elk.bundle.js';
 
 export function getWebviewContent(
   graph: SerializedStateFlowGraph,
@@ -52,12 +54,14 @@ ${getStyles()}
     </main>
     <div class="legend" id="legend"></div>
   </div>
+  <script>${elkBundleCode}</script>
   <script>${dagreBundleCode}</script>
   <script>
 const vscode = acquireVsCodeApi();
 const graphData = ${graphJSON};
 const summaryData = ${summaryJSON};
 const warningsData = ${warningsJSON};
+const USE_ELK = typeof ELK !== 'undefined';
 ${getScript()}
   </script>
 </body>
@@ -545,22 +549,22 @@ function getScript(): string {
 
   init();
 
-  function init() {
+  async function init() {
     setupEventListeners();
     processGraph();
     updateStats();
     updateLegend();
-    render();
+    await render();
   }
 
   function setupEventListeners() {
     tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
+      tab.addEventListener('click', async () => {
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         currentView = tab.dataset.view;
         updateLegend();
-        render();
+        await render();
       });
     });
 
@@ -746,24 +750,118 @@ function getScript(): string {
   }
 
   // Toggle collapse state for a node
-  function toggleCollapse(nodeId) {
+  async function toggleCollapse(nodeId) {
     if (collapsedNodes.has(nodeId)) {
       collapsedNodes.delete(nodeId);
     } else {
       collapsedNodes.add(nodeId);
     }
-    render();
+    await render();
   }
 
-  // Basic dagre layout (used as default)
+  // ELK layout options
+  const elkOptions = {
+    'elk.algorithm': 'layered',
+    'elk.direction': 'DOWN',
+    'elk.layered.spacing.nodeNodeBetweenLayers': '100',
+    'elk.spacing.nodeNode': '60',
+    'elk.padding': '[left=40, top=40, right=40, bottom=40]',
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+    'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+  };
+
+  // Store ELK edge points for drawing
+  let elkEdgePoints = new Map();
+
+  // Basic layout (uses ELK if available, falls back to Dagre)
   function layoutNodes() {
     if (nodes.length === 0) return;
 
-    if (typeof dagre === 'undefined') {
+    if (USE_ELK) {
+      layoutNodesElk();
+    } else if (typeof dagre !== 'undefined') {
+      layoutNodesDagre();
+    } else {
       layoutNodesFallback();
-      return;
     }
+  }
 
+  // ELK layout (async)
+  async function layoutNodesElk() {
+    const elk = new ELK.default();
+
+    // Build ELK graph
+    const elkChildren = nodes.map(node => ({
+      id: node.id,
+      width: getNodeWidth(node),
+      height: 40,
+      labels: [{ text: node.name }],
+    }));
+
+    const elkEdges = graphData.edges
+      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
+      .filter(e => nodes.some(n => n.id === e.from) && nodes.some(n => n.id === e.to))
+      .map((edge, i) => ({
+        id: 'e' + i,
+        sources: [edge.from],
+        targets: [edge.to],
+      }));
+
+    const elkGraph = {
+      id: 'root',
+      layoutOptions: elkOptions,
+      children: elkChildren,
+      edges: elkEdges,
+    };
+
+    try {
+      const result = await elk.layout(elkGraph);
+
+      // Extract node positions
+      if (result.children) {
+        for (const child of result.children) {
+          const node = nodes.find(n => n.id === child.id);
+          if (node) {
+            node.x = (child.x || 0) + (child.width || 0) / 2;
+            node.y = (child.y || 0) + (child.height || 0) / 2;
+          }
+        }
+      }
+
+      // Extract edge points
+      elkEdgePoints = new Map();
+      if (result.edges) {
+        for (const edge of result.edges) {
+          if (edge.sections) {
+            const points = [];
+            for (const section of edge.sections) {
+              if (section.startPoint) points.push(section.startPoint);
+              if (section.bendPoints) points.push(...section.bendPoints);
+              if (section.endPoint) points.push(section.endPoint);
+            }
+            // Map back to original edge
+            const origEdge = graphData.edges.find(e =>
+              edge.sources.includes(e.from) && edge.targets.includes(e.to)
+            );
+            if (origEdge) {
+              elkEdgePoints.set(origEdge.from + '->' + origEdge.to, points);
+            }
+          }
+        }
+      }
+
+      currentClusters = new Map();
+      fitToView();
+      updateTransform();
+    } catch (error) {
+      console.error('ELK layout error:', error);
+      layoutNodesFallback();
+    }
+  }
+
+  // Dagre layout (synchronous, fallback)
+  function layoutNodesDagre() {
     dagreGraph = new dagre.graphlib.Graph({ compound: true });
     dagreGraph.setGraph({
       rankdir: 'TB',
@@ -775,7 +873,6 @@ function getScript(): string {
     });
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    // Add nodes with dimensions
     nodes.forEach(node => {
       dagreGraph.setNode(node.id, {
         label: node.name,
@@ -784,7 +881,6 @@ function getScript(): string {
       });
     });
 
-    // Add edges for layout calculation
     graphData.edges
       .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
       .forEach(edge => {
@@ -793,10 +889,8 @@ function getScript(): string {
         }
       });
 
-    // Run dagre layout
     dagre.layout(dagreGraph);
 
-    // Extract positions
     nodes.forEach(node => {
       const dagreNode = dagreGraph.node(node.id);
       if (dagreNode) {
@@ -832,15 +926,187 @@ function getScript(): string {
     fitToView();
   }
 
-  // Layout with clustering support
-  function layoutWithClustering(getClusterForNode) {
+  // Layout with clustering support (uses ELK compound nodes or Dagre)
+  async function layoutWithClustering(getClusterForNode) {
     if (nodes.length === 0) return new Map();
 
-    if (typeof dagre === 'undefined') {
+    // Identify clusters first
+    const clusters = new Map();
+    nodes.forEach(node => {
+      const clusterId = getClusterForNode(node);
+      if (clusterId) {
+        if (!clusters.has(clusterId)) clusters.set(clusterId, []);
+        clusters.get(clusterId).push(node);
+      }
+    });
+
+    if (USE_ELK) {
+      await layoutWithClusteringElk(clusters);
+    } else if (typeof dagre !== 'undefined') {
+      layoutWithClusteringDagre(getClusterForNode, clusters);
+    } else {
       layoutNodesFallback();
-      return new Map();
     }
 
+    return clusters;
+  }
+
+  // ELK layout with compound nodes (async)
+  async function layoutWithClusteringElk(clusters) {
+    const elk = new ELK.default();
+    const processedNodes = new Set();
+
+    // Build ELK graph with compound nodes for clusters
+    const elkChildren = [];
+
+    // Add cluster compound nodes with their children
+    clusters.forEach((clusterNodes, clusterId) => {
+      const children = clusterNodes.map(node => {
+        processedNodes.add(node.id);
+        return {
+          id: node.id,
+          width: getNodeWidth(node),
+          height: 40,
+          labels: [{ text: node.name }],
+        };
+      });
+
+      elkChildren.push({
+        id: clusterId,
+        labels: [{ text: clusterId.replace(/^(ctx:|dir:)/, '') }],
+        children: children,
+        layoutOptions: {
+          'elk.padding': '[left=20, top=35, right=20, bottom=20]',
+        },
+      });
+    });
+
+    // Add unclustered nodes
+    nodes.forEach(node => {
+      if (!processedNodes.has(node.id)) {
+        elkChildren.push({
+          id: node.id,
+          width: getNodeWidth(node),
+          height: 40,
+          labels: [{ text: node.name }],
+        });
+      }
+    });
+
+    // Build edges
+    const elkEdges = graphData.edges
+      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
+      .filter(e => nodes.some(n => n.id === e.from) && nodes.some(n => n.id === e.to))
+      .map((edge, i) => ({
+        id: 'e' + i,
+        sources: [edge.from],
+        targets: [edge.to],
+      }));
+
+    const elkGraph = {
+      id: 'root',
+      layoutOptions: elkOptions,
+      children: elkChildren,
+      edges: elkEdges,
+    };
+
+    try {
+      const result = await elk.layout(elkGraph);
+
+      // Extract positions recursively
+      elkEdgePoints = new Map();
+
+      function processElkChildren(children, offsetX = 0, offsetY = 0) {
+        for (const child of children) {
+          const x = (child.x || 0) + offsetX;
+          const y = (child.y || 0) + offsetY;
+
+          if (child.children && child.children.length > 0) {
+            // This is a cluster - store its bounds
+            const clusterData = currentClusters.get(child.id);
+            if (clusterData) {
+              child._bounds = { x, y, width: child.width, height: child.height };
+            }
+            processElkChildren(child.children, x, y);
+          } else {
+            // Regular node
+            const node = nodes.find(n => n.id === child.id);
+            if (node) {
+              node.x = x + (child.width || 0) / 2;
+              node.y = y + (child.height || 0) / 2;
+            }
+          }
+        }
+      }
+
+      if (result.children) {
+        processElkChildren(result.children);
+
+        // Store cluster bounds for drawing boundaries
+        for (const child of result.children) {
+          if (child.children && child.children.length > 0) {
+            const existing = clusters.get(child.id);
+            if (existing) {
+              existing._elkBounds = {
+                x: child.x || 0,
+                y: child.y || 0,
+                width: child.width || 0,
+                height: child.height || 0,
+              };
+            }
+          }
+        }
+      }
+
+      // Extract edge points
+      function extractEdgePoints(container, offsetX = 0, offsetY = 0) {
+        if (container.edges) {
+          for (const edge of container.edges) {
+            if (edge.sections) {
+              const points = [];
+              for (const section of edge.sections) {
+                if (section.startPoint) {
+                  points.push({ x: section.startPoint.x + offsetX, y: section.startPoint.y + offsetY });
+                }
+                if (section.bendPoints) {
+                  for (const bp of section.bendPoints) {
+                    points.push({ x: bp.x + offsetX, y: bp.y + offsetY });
+                  }
+                }
+                if (section.endPoint) {
+                  points.push({ x: section.endPoint.x + offsetX, y: section.endPoint.y + offsetY });
+                }
+              }
+              const origEdge = graphData.edges.find(e =>
+                edge.sources.includes(e.from) && edge.targets.includes(e.to)
+              );
+              if (origEdge) {
+                elkEdgePoints.set(origEdge.from + '->' + origEdge.to, points);
+              }
+            }
+          }
+        }
+        if (container.children) {
+          for (const child of container.children) {
+            if (child.children) {
+              extractEdgePoints(child, offsetX + (child.x || 0), offsetY + (child.y || 0));
+            }
+          }
+        }
+      }
+      extractEdgePoints(result);
+
+      currentClusters = clusters;
+      fitToView();
+      updateTransform();
+    } catch (error) {
+      console.error('ELK clustering layout error:', error);
+      layoutNodesFallback();
+    }
+  }
+
+  // Dagre layout with clustering (synchronous, fallback)
+  function layoutWithClusteringDagre(getClusterForNode, clusters) {
     dagreGraph = new dagre.graphlib.Graph({ compound: true });
     dagreGraph.setGraph({
       rankdir: 'TB',
@@ -851,16 +1117,6 @@ function getScript(): string {
       ranker: 'network-simplex'
     });
     dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-    // Identify clusters
-    const clusters = new Map();
-    nodes.forEach(node => {
-      const clusterId = getClusterForNode(node);
-      if (clusterId) {
-        if (!clusters.has(clusterId)) clusters.set(clusterId, []);
-        clusters.get(clusterId).push(node);
-      }
-    });
 
     // Add cluster subgraphs to dagre
     clusters.forEach((clusterNodes, clusterId) => {
@@ -905,11 +1161,10 @@ function getScript(): string {
 
     currentClusters = clusters;
     fitToView();
-    return clusters;
   }
 
   // Layout for State Flow view - directory-based clustering
-  function layoutForStateFlow() {
+  async function layoutForStateFlow() {
     const getDirectoryCluster = (node) => {
       if (!node.data.filePath) return null;
       const parts = node.data.filePath.split('/');
@@ -922,11 +1177,11 @@ function getScript(): string {
       return parts.length > 1 ? 'dir:' + parts[parts.length - 2] : null;
     };
 
-    return layoutWithClustering(getDirectoryCluster);
+    return await layoutWithClustering(getDirectoryCluster);
   }
 
   // Layout for Context view - context boundary clustering
-  function layoutForContextView() {
+  async function layoutForContextView() {
     const getContextCluster = (node) => {
       for (const boundary of graphData.contextBoundaries) {
         if (boundary.providerComponent === node.id) {
@@ -941,7 +1196,7 @@ function getScript(): string {
       return null;
     };
 
-    return layoutWithClustering(getContextCluster);
+    return await layoutWithClustering(getContextCluster);
   }
 
   // Draw cluster boundary helper
@@ -1018,7 +1273,7 @@ function getScript(): string {
     }
   }
 
-  function render() {
+  async function render() {
     svg.innerHTML = '';
 
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -1032,10 +1287,10 @@ function getScript(): string {
 
     switch (currentView) {
       case 'flow':
-        renderFlowView(g);
+        await renderFlowView(g);
         break;
       case 'context':
-        renderContextView(g);
+        await renderContextView(g);
         break;
       case 'drilling':
         renderDrillingView(g);
@@ -1055,9 +1310,9 @@ function getScript(): string {
     \`;
   }
 
-  function renderFlowView(g) {
+  async function renderFlowView(g) {
     // Layout with directory clustering
-    const clusters = layoutForStateFlow();
+    const clusters = await layoutForStateFlow();
 
     // Draw cluster boundaries (directories)
     clusters.forEach((clusterNodes, clusterId) => {
@@ -1085,9 +1340,9 @@ function getScript(): string {
     getVisibleNodes().forEach(node => drawNode(g, node));
   }
 
-  function renderContextView(g) {
+  async function renderContextView(g) {
     // Layout with context boundary clustering
-    const clusters = layoutForContextView();
+    const clusters = await layoutForContextView();
 
     // Draw context boundaries from dagre cluster positions
     clusters.forEach((clusterNodes, clusterId) => {
@@ -1441,50 +1696,61 @@ function getScript(): string {
 
     let d;
 
-    // Try to use dagre's calculated edge path if available
-    if (dagreGraph) {
+    // Try to use ELK's calculated edge path first
+    const elkKey = edge.from + '->' + edge.to;
+    const elkPoints = elkEdgePoints.get(elkKey);
+    if (elkPoints && elkPoints.length > 0) {
+      d = 'M' + elkPoints[0].x + ',' + elkPoints[0].y;
+      if (elkPoints.length === 2) {
+        d += ' L' + elkPoints[1].x + ',' + elkPoints[1].y;
+      } else if (elkPoints.length >= 3) {
+        // Create smooth curve through ELK's calculated points
+        for (let i = 1; i < elkPoints.length - 1; i++) {
+          const p1 = elkPoints[i];
+          const p2 = elkPoints[i + 1];
+          d += ' Q' + p1.x + ',' + p1.y + ' ' +
+            ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
+        }
+        d += ' L' + elkPoints[elkPoints.length - 1].x + ',' + elkPoints[elkPoints.length - 1].y;
+      }
+    }
+    // Fall back to dagre's calculated edge path
+    else if (dagreGraph) {
       const dagreEdge = dagreGraph.edge(source.id, target.id);
       if (dagreEdge && dagreEdge.points && dagreEdge.points.length > 0) {
-        // Use dagre's calculated path points
         const points = dagreEdge.points;
         d = 'M' + points[0].x + ',' + points[0].y;
 
         if (points.length === 2) {
-          // Simple line
           d += ' L' + points[1].x + ',' + points[1].y;
         } else if (points.length >= 3) {
-          // Create smooth curve through all points
           for (let i = 1; i < points.length - 1; i++) {
             const p0 = points[i - 1];
             const p1 = points[i];
             const p2 = points[i + 1];
-            // Quadratic bezier through midpoints
             d += ' Q' + p1.x + ',' + p1.y + ' ' +
               ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
           }
-          // Final line to last point
           d += ' L' + points[points.length - 1].x + ',' + points[points.length - 1].y;
         }
       }
     }
 
-    // Fallback if dagre path not available
+    // Fallback if no calculated path available
     if (!d) {
       const dx = target.x - source.x;
       const dy = target.y - source.y;
 
       let startX = source.x;
-      let startY = source.y + nodeHeight; // Bottom of source
+      let startY = source.y + nodeHeight;
       let endX = target.x;
-      let endY = target.y - nodeHeight; // Top of target
+      let endY = target.y - nodeHeight;
 
-      // If target is above source, flip
       if (dy < 0) {
         startY = source.y - nodeHeight;
         endY = target.y + nodeHeight;
       }
 
-      // If mostly horizontal, use sides
       if (Math.abs(dx) > Math.abs(dy) * 2) {
         startY = source.y;
         endY = target.y;
@@ -1492,7 +1758,6 @@ function getScript(): string {
         endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
       }
 
-      // Create smooth bezier curve
       const midY = (startY + endY) / 2;
       d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
     }

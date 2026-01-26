@@ -91,7 +91,9 @@
     }
   },
   "scripts": {
-    "prebuild": "esbuild node_modules/dagre/dist/dagre.js --bundle --format=iife --global-name=dagre --minify --outfile=src/panels/dagre.bundle.js",
+    "prebuild:dagre": "esbuild node_modules/dagre/dist/dagre.js --bundle --format=iife --global-name=dagre --minify --outfile=src/panels/dagre.bundle.js",
+    "prebuild:elk": "esbuild node_modules/elkjs/lib/elk.bundled.js --bundle --format=iife --global-name=ELK --minify --outfile=src/panels/elk.bundle.js",
+    "prebuild": "npm run prebuild:dagre && npm run prebuild:elk",
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --tree-shaking=true --loader:.bundle.js=text",
     "build:dev": "npm run prebuild && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --loader:.bundle.js=text",
     "watch": "npm run build:dev -- --watch",
@@ -100,12 +102,13 @@
   },
   "dependencies": {
     "@react-state-map/core": "workspace:*",
-    "dagre": "^0.8.5"
+    "dagre": "^0.8.5",
+    "elkjs": "^0.11.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
-    "@types/node": "^20.10.0",
     "@types/dagre": "^0.7.52",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
     "esbuild": "^0.19.0",
     "typescript": "^5.3.0"
   }

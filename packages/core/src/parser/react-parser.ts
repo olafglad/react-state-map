@@ -81,26 +81,22 @@ export class ReactParser {
 
   private loadSourceFiles(): SourceFile[] {
     const include = this.options.include || ['**/*.tsx', '**/*.jsx', '**/*.ts', '**/*.js'];
-    const exclude = this.options.exclude || ['**/node_modules/**', '**/dist/**', '**/*.test.*', '**/*.spec.*'];
+    const exclude = this.options.exclude || [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/*.test.*',
+      '**/*.spec.*',
+      '**/*.bundle.js'
+    ];
 
-    const globs = include.map(pattern => path.join(this.options.rootDir, pattern));
+    // Build globs with negation patterns so ts-morph excludes during loading
+    const includeGlobs = include.map(pattern => path.join(this.options.rootDir, pattern));
+    const excludeGlobs = exclude.map(pattern => '!' + path.join(this.options.rootDir, pattern));
 
-    this.project.addSourceFilesAtPaths(globs);
+    // Pass both include and exclude patterns - ts-morph will skip excluded files
+    this.project.addSourceFilesAtPaths([...includeGlobs, ...excludeGlobs]);
 
-    const excludePatterns = exclude.map(pattern => {
-      // Escape special regex characters except * which we handle specially
-      const escaped = pattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*\*/g, '{{GLOBSTAR}}')
-        .replace(/\*/g, '[^/]*')
-        .replace(/\{\{GLOBSTAR\}\}/g, '.*');
-      return new RegExp(escaped);
-    });
-
-    return this.project.getSourceFiles().filter(sf => {
-      const filePath = sf.getFilePath();
-      return !excludePatterns.some(pattern => pattern.test(filePath));
-    });
+    return this.project.getSourceFiles();
   }
 
   private parseAllFiles(sourceFiles: SourceFile[]): ParsedComponentData[] {
