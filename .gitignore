@@ -5,3 +5,7 @@ dist/
 *.log
 .env
 state-map.html
+
+# Development plans (local only)
+INTEGRATION_PLAN.md
+DEVELOPMENTPLAN.md

@@ -1761,8 +1761,8 @@ function getScript(): string {
     directories.forEach((dir, dirPath) => {
       dirNodes.push({
         id: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
-        width: Math.max(200, dir.name.length * 12 + 100),
-        height: 80,
+        width: Math.max(600, dir.name.length * 30 + 300),
+        height: 250,
         name: dir.name,
         dirPath: dirPath,
         data: dir
@@ -1843,7 +1843,7 @@ function getScript(): string {
           statefulCount: dir.statefulCount,
           hasProvider: dir.hasProvider,
           width: dirNode.width,
-          height: 80
+          height: 250
         },
         position: { x: dirNode.x, y: dirNode.y },
         classes: currentZoomLevel !== 'far' ? 'zoom-hidden' : ''
@@ -2136,14 +2136,14 @@ function getScript(): string {
         style: {
           'shape': 'roundrectangle',
           'background-color': '#30363d',
-          'border-width': 3,
+          'border-width': 5,
           'border-color': '#8b949e',
           'color': '#ffffff',
-          'font-size': '16px',
+          'font-size': '40px',
           'font-weight': 'bold',
           'text-valign': 'center',
           'text-halign': 'center',
-          'padding': '10px'
+          'padding': '30px'
         }
       },
       // Directory with stateful components
@@ -2162,15 +2162,28 @@ function getScript(): string {
           'border-width': 3
         }
       },
-      // Directory edges
+      // Directory edges - show connection count between directories
       {
         selector: 'edge[edgeType="directory"]',
         style: {
-          'line-color': '#8b949e',
-          'target-arrow-color': '#8b949e',
-          'width': 'mapData(weight, 1, 10, 2, 6)',
-          'opacity': 0.7,
-          'curve-style': 'bezier'
+          'line-color': '#58a6ff',
+          'target-arrow-color': '#58a6ff',
+          'target-arrow-shape': 'triangle',
+          'arrow-scale': 2,
+          'width': 'mapData(weight, 1, 10, 4, 12)',
+          'opacity': 0.8,
+          'curve-style': 'bezier',
+          'label': 'data(weight)',
+          'font-size': '24px',
+          'font-weight': 'bold',
+          'color': '#ffffff',
+          'text-background-color': '#1f6feb',
+          'text-background-opacity': 1,
+          'text-background-padding': '6px',
+          'text-background-shape': 'roundrectangle',
+          'text-border-color': '#58a6ff',
+          'text-border-width': 2,
+          'text-border-opacity': 1
         }
       },
       // Zoom-hidden elements
