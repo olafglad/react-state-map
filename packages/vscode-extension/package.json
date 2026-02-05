@@ -93,8 +93,9 @@
   "scripts": {
     "prebuild:dagre": "esbuild node_modules/dagre/dist/dagre.js --bundle --format=iife --global-name=dagre --minify --outfile=src/panels/dagre.bundle.js",
     "prebuild:elk": "esbuild node_modules/elkjs/lib/elk.bundled.js --bundle --format=iife --global-name=ELK --minify --outfile=src/panels/elk.bundle.js",
-    "prebuild": "npm run prebuild:dagre && npm run prebuild:elk",
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --tree-shaking=true --loader:.bundle.js=text",
+    "prebuild:cytoscape": "esbuild node_modules/cytoscape/dist/cytoscape.umd.js --bundle --format=iife --global-name=cytoscape --minify --outfile=src/panels/cytoscape.bundle.js",
+    "prebuild": "npm run prebuild:dagre && npm run prebuild:elk && npm run prebuild:cytoscape",
+    "build": "npm run prebuild && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify --tree-shaking=true --loader:.bundle.js=text",
     "build:dev": "npm run prebuild && esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --loader:.bundle.js=text",
     "watch": "npm run build:dev -- --watch",
     "package": "vsce package",
@@ -102,6 +103,7 @@
   },
   "dependencies": {
     "@react-state-map/core": "workspace:*",
+    "cytoscape": "^3.30.0",
     "dagre": "^0.8.5",
     "elkjs": "^0.11.0"
   },

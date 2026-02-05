@@ -1,8 +1,8 @@
 import type { SerializedStateFlowGraph, GraphSummary, ParseWarning } from '@react-state-map/core';
 // @ts-ignore - esbuild imports this as text
-import dagreBundleCode from './dagre.bundle.js';
-// @ts-ignore - esbuild imports this as text
 import elkBundleCode from './elk.bundle.js';
+// @ts-ignore - esbuild imports this as text
+import cytoscapeBundleCode from './cytoscape.bundle.js';
 
 export function getWebviewContent(
   graph: SerializedStateFlowGraph,
@@ -35,15 +35,63 @@ ${getStyles()}
           <button class="tab" data-view="drilling">Drilling</button>
         </nav>
       </div>
+      <div class="header-center">
+        <div class="search-container">
+          <input type="text" class="search-input" id="searchInput" placeholder="Search components..." autocomplete="off">
+          <div class="search-results" id="searchResults"></div>
+        </div>
+      </div>
       <div class="header-right">
-        <div class="stats" id="stats"></div>
+        <div class="stats-container">
+          <button class="stats-toggle" id="statsToggle" title="Toggle stats">
+            <span class="stats-summary" id="statsSummary"></span>
+            <span class="stats-arrow">▼</span>
+          </button>
+          <div class="stats-dropdown" id="statsDropdown">
+            <div class="stats" id="stats"></div>
+          </div>
+        </div>
+        <button class="path-btn" id="pathBtn" title="Find path">⤳</button>
         <button class="refresh-btn" id="fitBtn" title="Fit to View">⊡</button>
         <button class="refresh-btn" id="refreshBtn" title="Refresh">↻</button>
       </div>
     </header>
+    <div class="path-mode-banner" id="pathModeBanner">
+      <span class="path-mode-text">Click two components to find the path</span>
+      <span class="path-mode-selection" id="pathSelection"></span>
+      <button class="path-mode-cancel" id="pathCancel">Cancel</button>
+    </div>
     <main class="main">
-      <div class="canvas-container">
-        <svg id="graph" width="100%" height="100%"></svg>
+      <div class="canvas-wrapper">
+        <div class="canvas-container" id="cy"></div>
+        <div class="floating-panel" id="floatingPanel">
+          <div class="floating-panel-header" id="panelHeader">
+            <span>Layers</span>
+            <button class="panel-collapse-btn" id="panelCollapseBtn">−</button>
+          </div>
+          <div class="floating-panel-content" id="panelContent">
+            <label class="toggle-label" id="togglePropsLabel">
+              <input type="checkbox" id="toggleProps" checked>
+              <span class="toggle-indicator toggle-props"></span>
+              Props
+            </label>
+            <label class="toggle-label" id="toggleHierarchyLabel">
+              <input type="checkbox" id="toggleHierarchy" checked>
+              <span class="toggle-indicator toggle-hierarchy"></span>
+              Hierarchy
+            </label>
+            <label class="toggle-label" id="toggleContextLabel">
+              <input type="checkbox" id="toggleContext" checked>
+              <span class="toggle-indicator toggle-context"></span>
+              Context
+            </label>
+            <label class="toggle-label" id="toggleDrillingLabel">
+              <input type="checkbox" id="toggleDrilling" checked>
+              <span class="toggle-indicator toggle-drilling"></span>
+              Drilling
+            </label>
+          </div>
+        </div>
       </div>
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-content">
@@ -55,13 +103,12 @@ ${getStyles()}
     <div class="legend" id="legend"></div>
   </div>
   <script>${elkBundleCode}</script>
-  <script>${dagreBundleCode}</script>
+  <script>${cytoscapeBundleCode}</script>
   <script>
 const vscode = acquireVsCodeApi();
 const graphData = ${graphJSON};
 const summaryData = ${summaryJSON};
 const warningsData = ${warningsJSON};
-const USE_ELK = typeof ELK !== 'undefined';
 ${getScript()}
   </script>
 </body>
@@ -97,6 +144,8 @@ function getStyles(): string {
       padding: 8px 16px;
       background: var(--vscode-sideBar-background);
       border-bottom: 1px solid var(--vscode-panel-border);
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     .header-left {
@@ -105,10 +154,122 @@ function getStyles(): string {
       gap: 16px;
     }
 
+    .header-center {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      min-width: 150px;
+      max-width: 300px;
+      transition: max-width 0.2s ease;
+    }
+
+    .header-center.expanded {
+      max-width: 500px;
+    }
+
+    .search-container {
+      position: relative;
+      width: 100%;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .search-input:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .search-input::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+
+    .search-results {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--vscode-dropdown-background);
+      border: 1px solid var(--vscode-dropdown-border);
+      border-radius: 4px;
+      margin-top: 4px;
+      max-height: 250px;
+      overflow-y: auto;
+      z-index: 1000;
+      display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .search-results.visible {
+      display: block;
+    }
+
+    .search-result-item {
+      padding: 8px 10px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--vscode-dropdown-border);
+    }
+
+    .search-result-item:last-child {
+      border-bottom: none;
+    }
+
+    .search-result-item:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .search-result-item.selected {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+
+    .search-result-name {
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+
+    .search-result-path {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .search-result-badge {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 9px;
+      margin-left: 6px;
+    }
+
+    .search-result-badge.stateful {
+      background: var(--vscode-charts-blue);
+      color: white;
+    }
+
+    .search-result-badge.provider {
+      background: var(--vscode-charts-green);
+      color: white;
+    }
+
+    .search-no-results {
+      padding: 10px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+    }
+
     .header-right {
       display: flex;
       align-items: center;
       gap: 12px;
+      flex-wrap: wrap;
     }
 
     .header h1 {
@@ -143,6 +304,95 @@ function getStyles(): string {
       color: var(--vscode-button-foreground);
     }
 
+    .floating-panel {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      background: var(--vscode-sideBar-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 1000;
+      min-width: 110px;
+    }
+
+    .floating-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      background: var(--vscode-input-background);
+      border-radius: 6px 6px 0 0;
+      cursor: move;
+      user-select: none;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--vscode-descriptionForeground);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .panel-collapse-btn {
+      background: none;
+      border: none;
+      color: var(--vscode-descriptionForeground);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+
+    .panel-collapse-btn:hover {
+      color: var(--vscode-foreground);
+    }
+
+    .floating-panel-content {
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .floating-panel-content.collapsed {
+      display: none;
+    }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+      user-select: none;
+      padding: 2px 0;
+    }
+
+    .toggle-label:hover {
+      color: var(--vscode-foreground);
+    }
+
+    .toggle-label input {
+      display: none;
+    }
+
+    .toggle-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 2px solid currentColor;
+      transition: all 0.15s;
+    }
+
+    .toggle-label input:checked + .toggle-indicator {
+      background: currentColor;
+    }
+
+    .toggle-props { color: var(--vscode-charts-green); }
+    .toggle-context { color: var(--vscode-charts-purple); }
+    .toggle-hierarchy { color: var(--vscode-descriptionForeground); }
+    .toggle-drilling { color: var(--vscode-charts-red); }
+
     .stats {
       font-size: 11px;
       color: var(--vscode-descriptionForeground);
@@ -150,6 +400,96 @@ function getStyles(): string {
 
     .stats span {
       margin-left: 12px;
+    }
+
+    .stats-container {
+      position: relative;
+    }
+
+    .stats-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border: none;
+      background: var(--vscode-input-background);
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+
+    .stats-toggle:hover {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-foreground);
+    }
+
+    .stats-arrow {
+      font-size: 9px;
+      transition: transform 0.2s;
+    }
+
+    .stats-container.open .stats-arrow {
+      transform: rotate(180deg);
+    }
+
+    .stats-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      padding: 10px 14px;
+      background: var(--vscode-dropdown-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      min-width: 180px;
+      z-index: 1000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .stats-container.open .stats-dropdown {
+      display: block;
+    }
+
+    .stats-dropdown .stats {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* Top 3 stats in a bordered group */
+    .stats-dropdown .stats > span:not([class*="badge"]) {
+      display: block;
+      padding: 8px 12px;
+      background: transparent;
+      border-left: 2px solid var(--vscode-panel-border);
+      margin-left: 4px;
+    }
+
+    .stats-dropdown .stats > span:not([class*="badge"]):first-child {
+      padding-top: 10px;
+      border-top-left-radius: 2px;
+    }
+
+    .stats-dropdown .stats > span:not([class*="badge"]):nth-child(3) {
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+      border-bottom-left-radius: 2px;
+    }
+
+    /* Badge styles inside dropdown - keep original colors */
+    .stats-dropdown .warning-badge,
+    .stats-dropdown .passthrough-badge,
+    .stats-dropdown .bundle-badge,
+    .stats-dropdown .leak-badge,
+    .stats-dropdown .rename-badge {
+      display: block;
+      margin: 2px 0;
+      padding: 8px 12px;
+      font-size: 11px;
+      border-radius: 4px;
     }
 
     .refresh-btn {
@@ -166,26 +506,75 @@ function getStyles(): string {
       background: var(--vscode-button-secondaryHoverBackground);
     }
 
+    .path-btn {
+      padding: 4px 8px;
+      border: none;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .path-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .path-btn.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    .path-mode-banner {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: var(--vscode-inputValidation-infoBackground);
+      border-bottom: 1px solid var(--vscode-inputValidation-infoBorder);
+      color: var(--vscode-inputValidation-infoForeground);
+      font-size: 12px;
+    }
+
+    .path-mode-banner.visible {
+      display: flex;
+    }
+
+    .path-mode-selection {
+      font-weight: 600;
+    }
+
+    .path-mode-cancel {
+      padding: 3px 8px;
+      border: 1px solid var(--vscode-button-secondaryBackground);
+      background: transparent;
+      color: var(--vscode-foreground);
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+
+    .path-mode-cancel:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
     .main {
       display: flex;
       flex: 1;
       overflow: hidden;
     }
 
-    .canvas-container {
+    .canvas-wrapper {
       flex: 1;
       position: relative;
       overflow: hidden;
     }
 
-    #graph {
+    .canvas-container {
       width: 100%;
       height: 100%;
-      cursor: grab;
-    }
-
-    #graph:active {
-      cursor: grabbing;
+      background: var(--vscode-editor-background);
     }
 
     .sidebar {
@@ -237,6 +626,35 @@ function getStyles(): string {
     .file-link:hover {
       background: var(--vscode-list-hoverBackground);
       text-decoration: underline;
+    }
+
+    .sidebar-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .sidebar-btn {
+      padding: 4px 10px;
+      border: none;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .sidebar-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .sidebar-btn.secondary {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+
+    .sidebar-btn.secondary:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
     }
 
     .detail-row {
@@ -294,105 +712,6 @@ function getStyles(): string {
       width: 10px;
       height: 10px;
       border-radius: 2px;
-    }
-
-    /* Graph styles */
-    .node {
-      cursor: pointer;
-    }
-
-    .node-rect {
-      transition: opacity 0.15s;
-    }
-
-    .node:hover .node-rect {
-      opacity: 0.8;
-    }
-
-    .node-component {
-      fill: var(--vscode-charts-green);
-    }
-
-    .node-component-state {
-      fill: var(--vscode-charts-blue);
-    }
-
-    .node-label {
-      font-size: 11px;
-      fill: white;
-      text-anchor: middle;
-      dominant-baseline: middle;
-      pointer-events: none;
-    }
-
-    .edge {
-      stroke-width: 2;
-      fill: none;
-    }
-
-    .edge-props {
-      stroke: var(--vscode-charts-green);
-    }
-
-    .edge-context {
-      stroke: var(--vscode-charts-purple);
-      stroke-dasharray: 5, 5;
-    }
-
-    .edge-props-subtle {
-      stroke: var(--vscode-panel-border);
-      stroke-width: 1;
-      opacity: 0.5;
-    }
-
-    .edge-drilling {
-      stroke: var(--vscode-charts-red);
-      stroke-width: 3;
-    }
-
-    .context-boundary {
-      fill: color-mix(in srgb, var(--vscode-charts-purple) 10%, transparent);
-      stroke: var(--vscode-charts-purple);
-      stroke-width: 2;
-      stroke-dasharray: 8, 4;
-      rx: 8;
-    }
-
-    .collapse-indicator {
-      cursor: pointer;
-      user-select: none;
-      transition: fill 0.2s;
-    }
-
-    .collapse-indicator:hover {
-      fill: var(--vscode-foreground) !important;
-    }
-
-    .cluster-boundary {
-      pointer-events: none;
-    }
-
-    .cluster-label {
-      font-family: inherit;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .empty-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      color: var(--vscode-descriptionForeground);
-      text-align: center;
-      padding: 20px;
-    }
-
-    .empty-state h2 {
-      font-size: 16px;
-      margin-bottom: 8px;
-      color: var(--vscode-foreground);
     }
 
     .warning-badge {
@@ -524,37 +843,196 @@ function getStyles(): string {
       height: 8px;
       border-radius: 50%;
     }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--vscode-descriptionForeground);
+      text-align: center;
+      padding: 20px;
+    }
+
+    .empty-state h2 {
+      font-size: 16px;
+      margin-bottom: 8px;
+      color: var(--vscode-foreground);
+    }
   `;
 }
 
 function getScript(): string {
   return `
 (function() {
-  const svg = document.getElementById('graph');
   const sidebar = document.getElementById('sidebar');
   const statsEl = document.getElementById('stats');
   const legendEl = document.getElementById('legend');
   const tabs = document.querySelectorAll('.tab');
   const refreshBtn = document.getElementById('refreshBtn');
   const fitBtn = document.getElementById('fitBtn');
+  const toggleProps = document.getElementById('toggleProps');
+  const toggleContext = document.getElementById('toggleContext');
+  const toggleHierarchy = document.getElementById('toggleHierarchy');
+  const toggleDrilling = document.getElementById('toggleDrilling');
+  const togglePropsLabel = document.getElementById('togglePropsLabel');
+  const toggleHierarchyLabel = document.getElementById('toggleHierarchyLabel');
+  const toggleContextLabel = document.getElementById('toggleContextLabel');
+  const toggleDrillingLabel = document.getElementById('toggleDrillingLabel');
+  const statsToggle = document.getElementById('statsToggle');
+  const statsContainer = document.querySelector('.stats-container');
+  const statsSummary = document.getElementById('statsSummary');
+  const headerCenter = document.querySelector('.header-center');
+  const searchInput = document.getElementById('searchInput');
+  const searchResults = document.getElementById('searchResults');
+  const floatingPanel = document.getElementById('floatingPanel');
+  const panelHeader = document.getElementById('panelHeader');
+  const panelContent = document.getElementById('panelContent');
+  const panelCollapseBtn = document.getElementById('panelCollapseBtn');
 
   let currentView = 'flow';
-  let transform = { x: 0, y: 0, scale: 1 };
-  let isDragging = false;
-  let dragStart = { x: 0, y: 0 };
+  let cy = null;
   let nodes = [];
-  let dagreGraph = null;
   let collapsedNodes = new Set();
-  let currentClusters = new Map();
+  let hoveredNodeId = null;
+  let searchDebounceTimer = null;
+  let selectedSearchIndex = -1;
+  let currentSearchResults = [];
 
+  // Path finding state
+  let pathMode = false;
+  let pathStart = null;
+  let pathEnd = null;
+  const pathBtn = document.getElementById('pathBtn');
+  const pathModeBanner = document.getElementById('pathModeBanner');
+  const pathSelection = document.getElementById('pathSelection');
+  const pathCancel = document.getElementById('pathCancel');
+
+  // Semantic zoom state
+  const ZOOM_THRESHOLD_FAR = 0.4;
+  const ZOOM_THRESHOLD_CLOSE = 0.8;
+  let currentZoomLevel = 'close';
+  let directories = new Map();
+  let lastZoomUpdate = 0;
+
+  // Edge visibility state
+  let edgeVisibility = {
+    props: true,
+    context: true,
+    hierarchy: true,
+    drilling: true
+  };
+
+  // Context color palette
+  const CONTEXT_COLORS = [
+    { name: 'purple', fill: '#8957e5', light: '#bc8cff' },
+    { name: 'teal', fill: '#39d353', light: '#56d364' },
+    { name: 'orange', fill: '#d29922', light: '#e3b341' },
+    { name: 'pink', fill: '#db61a2', light: '#f778ba' },
+    { name: 'cyan', fill: '#33b3ae', light: '#79c0ff' },
+    { name: 'red', fill: '#f85149', light: '#ff7b72' },
+  ];
+  let contextColorMap = new Map();
+
+  // Assign colors to contexts
+  function assignContextColors() {
+    contextColorMap.clear();
+    const contexts = new Set();
+    graphData.contextBoundaries.forEach(b => contexts.add(b.contextName));
+    graphData.edges.filter(e => e.mechanism === 'context').forEach(e => {
+      if (e.propName) contexts.add(e.propName);
+    });
+    Object.values(graphData.components).forEach(comp => {
+      if (comp.contextProviders) {
+        comp.contextProviders.forEach(p => contexts.add(p.contextName));
+      }
+      if (comp.contextConsumers) {
+        comp.contextConsumers.forEach(c => contexts.add(c));
+      }
+    });
+    let colorIndex = 0;
+    contexts.forEach(name => {
+      contextColorMap.set(name, colorIndex % CONTEXT_COLORS.length);
+      colorIndex++;
+    });
+  }
+
+  function getContextColor(contextName) {
+    const index = contextColorMap.get(contextName);
+    if (index !== undefined) {
+      return CONTEXT_COLORS[index];
+    }
+    return CONTEXT_COLORS[0];
+  }
+
+  // Initialize
   init();
 
   async function init() {
-    setupEventListeners();
     processGraph();
+    assignContextColors();
+    setupEventListeners();
+    setupFloatingPanel();
     updateStats();
     updateLegend();
-    await render();
+    updateLayerToggles();
+    await initCytoscape();
+  }
+
+  function setupFloatingPanel() {
+    let isDragging = false;
+    let startX, startY, initialX, initialY;
+
+    panelCollapseBtn.addEventListener('click', () => {
+      panelContent.classList.toggle('collapsed');
+      panelCollapseBtn.textContent = panelContent.classList.contains('collapsed') ? '+' : '−';
+    });
+
+    panelHeader.addEventListener('mousedown', (e) => {
+      if (e.target === panelCollapseBtn) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = floatingPanel.getBoundingClientRect();
+      initialX = rect.left;
+      initialY = rect.top;
+      floatingPanel.style.transition = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      e.preventDefault();
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      floatingPanel.style.left = (initialX + dx) + 'px';
+      floatingPanel.style.top = (initialY + dy) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+      floatingPanel.style.transition = '';
+    });
+  }
+
+  function updateLayerToggles() {
+    // Show/hide toggles based on current view
+    if (currentView === 'flow') {
+      togglePropsLabel.style.display = 'flex';
+      toggleHierarchyLabel.style.display = 'none';
+      toggleContextLabel.style.display = 'flex';
+      toggleDrillingLabel.style.display = 'none';
+      floatingPanel.style.display = 'block';
+    } else if (currentView === 'context') {
+      togglePropsLabel.style.display = 'none';
+      toggleHierarchyLabel.style.display = 'flex';
+      toggleContextLabel.style.display = 'flex';
+      toggleDrillingLabel.style.display = 'none';
+      floatingPanel.style.display = 'block';
+    } else if (currentView === 'drilling') {
+      // Hide the panel in drilling view - it's a focused view
+      floatingPanel.style.display = 'none';
+    }
   }
 
   function setupEventListeners() {
@@ -564,7 +1042,8 @@ function getScript(): string {
         tab.classList.add('active');
         currentView = tab.dataset.view;
         updateLegend();
-        await render();
+        updateLayerToggles();
+        await initCytoscape();
       });
     });
 
@@ -573,63 +1052,439 @@ function getScript(): string {
     });
 
     fitBtn.addEventListener('click', () => {
-      fitToView();
-      updateTransform();
+      if (cy) cy.fit(50);
     });
 
-    svg.addEventListener('mousedown', handleMouseDown);
-    svg.addEventListener('mousemove', handleMouseMove);
-    svg.addEventListener('mouseup', handleMouseUp);
-    svg.addEventListener('mouseleave', handleMouseUp);
-    svg.addEventListener('wheel', handleWheel, { passive: false });
+    // Stats toggle
+    if (statsToggle && statsContainer) {
+      statsToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        statsContainer.classList.toggle('open');
+      });
+
+      // Close stats dropdown when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!statsContainer.contains(e.target)) {
+          statsContainer.classList.remove('open');
+        }
+      });
+    }
+
+    // Search input expansion on focus
+    if (searchInput && headerCenter) {
+      searchInput.addEventListener('focus', () => {
+        headerCenter.classList.add('expanded');
+      });
+
+      searchInput.addEventListener('blur', () => {
+        // Delay to allow click on results
+        setTimeout(() => {
+          if (!searchInput.value) {
+            headerCenter.classList.remove('expanded');
+          }
+        }, 200);
+      });
+    }
+
+    // Edge toggle listeners
+    toggleProps.addEventListener('change', () => {
+      edgeVisibility.props = toggleProps.checked;
+      updateEdgeVisibility();
+    });
+    toggleContext.addEventListener('change', () => {
+      edgeVisibility.context = toggleContext.checked;
+      updateEdgeVisibility();
+    });
+    toggleHierarchy.addEventListener('change', () => {
+      edgeVisibility.hierarchy = toggleHierarchy.checked;
+      updateEdgeVisibility();
+    });
+    toggleDrilling.addEventListener('change', () => {
+      edgeVisibility.drilling = toggleDrilling.checked;
+      updateEdgeVisibility();
+    });
+
+    // Search input listeners
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        performSearch(e.target.value);
+      }, 100);
+    });
+
+    searchInput.addEventListener('focus', () => {
+      if (searchInput.value.trim()) {
+        performSearch(searchInput.value);
+      }
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (!searchResults.classList.contains('visible')) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedSearchIndex = Math.min(selectedSearchIndex + 1, currentSearchResults.length - 1);
+        updateSearchSelection();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedSearchIndex = Math.max(selectedSearchIndex - 1, 0);
+        updateSearchSelection();
+      } else if (e.key === 'Enter' && selectedSearchIndex >= 0) {
+        e.preventDefault();
+        selectSearchResult(currentSearchResults[selectedSearchIndex]);
+      } else if (e.key === 'Escape') {
+        hideSearchResults();
+        searchInput.blur();
+      }
+    });
+
+    // Close search results when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.search-container')) {
+        hideSearchResults();
+      }
+    });
+
+    // Path finding
+    pathBtn.addEventListener('click', () => {
+      togglePathMode();
+    });
+
+    pathCancel.addEventListener('click', () => {
+      exitPathMode();
+    });
   }
 
-  function handleMouseDown(e) {
-    if (e.target === svg || e.target.closest('.graph-container')) {
-      if (!e.target.closest('.node')) {
-        isDragging = true;
-        dragStart = { x: e.clientX - transform.x, y: e.clientY - transform.y };
-        svg.style.cursor = 'grabbing';
+  // Path finding functions
+  function togglePathMode() {
+    if (pathMode) {
+      exitPathMode();
+    } else {
+      enterPathMode();
+    }
+  }
+
+  function enterPathMode() {
+    pathMode = true;
+    pathStart = null;
+    pathEnd = null;
+    pathBtn.classList.add('active');
+    pathModeBanner.classList.add('visible');
+    pathSelection.textContent = '';
+
+    // Clear any existing path highlight
+    if (cy) {
+      cy.elements().removeClass('path-highlight path-start path-end');
+    }
+  }
+
+  function exitPathMode() {
+    pathMode = false;
+    pathStart = null;
+    pathEnd = null;
+    pathBtn.classList.remove('active');
+    pathModeBanner.classList.remove('visible');
+
+    // Clear path highlight
+    if (cy) {
+      cy.elements().removeClass('path-highlight path-start path-end');
+    }
+  }
+
+  function handlePathModeClick(nodeData) {
+    const nodeId = nodeData.id || nodeData.componentData?.id;
+    const nodeName = nodeData.label || nodeData.name;
+
+    if (!pathStart) {
+      pathStart = nodeId;
+      pathSelection.textContent = nodeName + ' → ?';
+      if (cy) {
+        cy.getElementById(nodeId).addClass('path-start');
+      }
+    } else if (!pathEnd && nodeId !== pathStart) {
+      pathEnd = nodeId;
+      const startNode = nodes.find(n => n.id === pathStart);
+      pathSelection.textContent = (startNode?.name || pathStart) + ' → ' + nodeName;
+      if (cy) {
+        cy.getElementById(nodeId).addClass('path-end');
+      }
+      // Find and highlight the path
+      findAndHighlightPath();
+    }
+  }
+
+  function findAndHighlightPath() {
+    if (!cy || !pathStart || !pathEnd) return;
+
+    // Build adjacency list from edges
+    const adjacency = new Map();
+    cy.edges().forEach(edge => {
+      const source = edge.data('source');
+      const target = edge.data('target');
+      if (!adjacency.has(source)) adjacency.set(source, []);
+      if (!adjacency.has(target)) adjacency.set(target, []);
+      adjacency.get(source).push({ node: target, edge: edge.id() });
+      adjacency.get(target).push({ node: source, edge: edge.id() }); // Treat as undirected
+    });
+
+    // BFS to find shortest path
+    const queue = [{ node: pathStart, path: [pathStart], edges: [] }];
+    const visited = new Set([pathStart]);
+
+    while (queue.length > 0) {
+      const { node, path, edges } = queue.shift();
+
+      if (node === pathEnd) {
+        // Found the path!
+        highlightPath(path, edges);
+        return;
+      }
+
+      const neighbors = adjacency.get(node) || [];
+      for (const { node: neighbor, edge } of neighbors) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push({
+            node: neighbor,
+            path: [...path, neighbor],
+            edges: [...edges, edge]
+          });
+        }
+      }
+    }
+
+    // No path found
+    pathSelection.textContent += ' (no path found)';
+  }
+
+  function highlightPath(nodePath, edgePath) {
+    if (!cy) return;
+
+    // Highlight nodes in path
+    nodePath.forEach(nodeId => {
+      const node = cy.getElementById(nodeId);
+      if (node.length > 0) {
+        node.addClass('path-highlight');
+      }
+    });
+
+    // Highlight edges in path
+    edgePath.forEach(edgeId => {
+      const edge = cy.getElementById(edgeId);
+      if (edge.length > 0) {
+        edge.addClass('path-highlight');
+      }
+    });
+
+    // Fit view to show the path
+    const pathElements = cy.elements('.path-highlight');
+    if (pathElements.length > 0) {
+      cy.animate({
+        fit: { eles: pathElements, padding: 50 }
+      }, {
+        duration: 300,
+        easing: 'ease-out'
+      });
+    }
+
+    pathSelection.textContent += ' (' + (nodePath.length - 1) + ' hops)';
+  }
+
+  // Focus functions - expose globally for onclick handlers
+  let focusedNodeId = null;
+
+  window.focusOnNode = function(nodeId) {
+    if (!cy) return;
+
+    focusedNodeId = nodeId;
+    const node = cy.getElementById(nodeId);
+    if (node.length === 0) return;
+
+    // Get all connected nodes (1-hop neighbors)
+    const connectedEdges = cy.edges().filter(edge =>
+      edge.data('source') === nodeId || edge.data('target') === nodeId
+    );
+    const connectedNodes = new Set([nodeId]);
+    connectedEdges.forEach(edge => {
+      connectedNodes.add(edge.data('source'));
+      connectedNodes.add(edge.data('target'));
+    });
+
+    // Add focus class to connected elements, dim others
+    cy.nodes().forEach(n => {
+      if (connectedNodes.has(n.id())) {
+        n.addClass('focused');
+        n.removeClass('dimmed');
+      } else {
+        n.removeClass('focused');
+        n.addClass('dimmed');
+      }
+    });
+
+    cy.edges().forEach(e => {
+      if (connectedNodes.has(e.data('source')) && connectedNodes.has(e.data('target'))) {
+        e.addClass('focused');
+        e.removeClass('dimmed');
+      } else {
+        e.removeClass('focused');
+        e.addClass('dimmed');
+      }
+    });
+
+    // Fit to focused elements
+    const focusedElements = cy.elements('.focused');
+    if (focusedElements.length > 0) {
+      cy.animate({
+        fit: { eles: focusedElements, padding: 50 }
+      }, {
+        duration: 300,
+        easing: 'ease-out'
+      });
+    }
+
+    // Refresh sidebar to show clear button
+    showNodeDetails(node.data());
+  };
+
+  window.clearFocus = function() {
+    focusedNodeId = null;
+    if (cy) {
+      cy.elements().removeClass('focused dimmed');
+    }
+  };
+
+  // Search functions
+  function performSearch(query) {
+    query = query.trim().toLowerCase();
+    if (!query) {
+      hideSearchResults();
+      return;
+    }
+
+    // Search through all components
+    currentSearchResults = nodes
+      .filter(node => node.type === 'component')
+      .map(node => {
+        const name = node.name.toLowerCase();
+        const path = (node.data.filePath || '').toLowerCase();
+        const props = (node.data.propsReceived || []).join(' ').toLowerCase();
+
+        // Calculate match score
+        let score = 0;
+        if (name === query) score = 100;
+        else if (name.startsWith(query)) score = 80;
+        else if (name.includes(query)) score = 60;
+        else if (path.includes(query)) score = 40;
+        else if (props.includes(query)) score = 20;
+        else return null;
+
+        return { ...node, score };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    selectedSearchIndex = currentSearchResults.length > 0 ? 0 : -1;
+    renderSearchResults();
+  }
+
+  function renderSearchResults() {
+    if (currentSearchResults.length === 0) {
+      searchResults.innerHTML = '<div class="search-no-results">No components found</div>';
+    } else {
+      searchResults.innerHTML = currentSearchResults.map((result, index) => {
+        const hasState = result.hasState;
+        const isProvider = result.data.contextProviders && result.data.contextProviders.length > 0;
+        let badges = '';
+        if (hasState) badges += '<span class="search-result-badge stateful">stateful</span>';
+        if (isProvider) badges += '<span class="search-result-badge provider">provider</span>';
+
+        return \`
+          <div class="search-result-item\${index === selectedSearchIndex ? ' selected' : ''}" data-index="\${index}">
+            <div class="search-result-name">\${result.name}\${badges}</div>
+            <div class="search-result-path">\${result.data.filePath || ''}</div>
+          </div>
+        \`;
+      }).join('');
+
+      // Add click handlers
+      searchResults.querySelectorAll('.search-result-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const index = parseInt(item.dataset.index);
+          selectSearchResult(currentSearchResults[index]);
+        });
+      });
+    }
+    searchResults.classList.add('visible');
+  }
+
+  function updateSearchSelection() {
+    searchResults.querySelectorAll('.search-result-item').forEach((item, index) => {
+      item.classList.toggle('selected', index === selectedSearchIndex);
+    });
+  }
+
+  function hideSearchResults() {
+    searchResults.classList.remove('visible');
+    selectedSearchIndex = -1;
+  }
+
+  function selectSearchResult(result) {
+    hideSearchResults();
+    searchInput.value = result.name;
+    searchInput.blur();
+
+    // Find and focus on the node in Cytoscape
+    if (cy) {
+      const node = cy.getElementById(result.id);
+      if (node.length > 0) {
+        // Make sure we're at a zoom level that shows components
+        if (currentZoomLevel === 'far') {
+          currentZoomLevel = 'close';
+          applySemanticZoom();
+        }
+
+        // Center on the node with animation
+        cy.animate({
+          center: { eles: node },
+          zoom: Math.max(cy.zoom(), 1)
+        }, {
+          duration: 300,
+          easing: 'ease-out',
+          complete: () => {
+            // Highlight the node
+            node.addClass('search-highlight');
+            setTimeout(() => node.removeClass('search-highlight'), 2000);
+
+            // Show node details
+            showNodeDetails(node.data());
+          }
+        });
       }
     }
   }
 
-  function handleMouseMove(e) {
-    if (isDragging) {
-      transform.x = e.clientX - dragStart.x;
-      transform.y = e.clientY - dragStart.y;
-      updateTransform();
-    }
-  }
+  function updateEdgeVisibility() {
+    if (!cy) return;
+    cy.edges().forEach(edge => {
+      const type = edge.data('edgeType');
+      let visible = true;
+      if (type === 'props' && !edgeVisibility.props) visible = false;
+      if (type === 'context' && !edgeVisibility.context) visible = false;
+      if (type === 'hierarchy' && !edgeVisibility.hierarchy) visible = false;
+      if (type === 'drilling' && !edgeVisibility.drilling) visible = false;
 
-  function handleMouseUp() {
-    isDragging = false;
-    svg.style.cursor = 'grab';
-  }
-
-  function handleWheel(e) {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const rect = svg.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    transform.x = mouseX - (mouseX - transform.x) * delta;
-    transform.y = mouseY - (mouseY - transform.y) * delta;
-    transform.scale *= delta;
-    transform.scale = Math.max(0.02, Math.min(3, transform.scale));
-    updateTransform();
-  }
-
-  function updateTransform() {
-    const g = svg.querySelector('.graph-container');
-    if (g) {
-      g.setAttribute('transform', \`translate(\${transform.x}, \${transform.y}) scale(\${transform.scale})\`);
-    }
+      if (visible) {
+        edge.removeClass('hidden');
+      } else {
+        edge.addClass('hidden');
+      }
+    });
   }
 
   function processGraph() {
     nodes = [];
+    directories.clear();
     const components = Object.values(graphData.components);
 
     components.forEach((comp) => {
@@ -643,71 +1498,64 @@ function getScript(): string {
         x: 0,
         y: 0
       });
+
+      // Group by directory for semantic zoom
+      const dirPath = getDirectoryPath(comp.filePath);
+      if (!directories.has(dirPath)) {
+        directories.set(dirPath, {
+          path: dirPath,
+          name: dirPath.split('/').pop() || dirPath,
+          components: [],
+          componentIds: new Set(),
+          statefulCount: 0,
+          totalProps: 0,
+          hasProvider: false
+        });
+      }
+      const dir = directories.get(dirPath);
+      dir.components.push(comp);
+      dir.componentIds.add(comp.id);
+      if (hasState) dir.statefulCount++;
+      if (comp.props) dir.totalProps += comp.props.length;
+      if (comp.contextProviders && comp.contextProviders.length > 0) dir.hasProvider = true;
     });
 
-    layoutNodes();
+    // Compute inter-directory edges
+    directories.forEach((dir, dirPath) => {
+      dir.incomingDirs = new Map();
+      dir.outgoingDirs = new Map();
+    });
+
+    graphData.edges.forEach(edge => {
+      const fromComp = graphData.components[edge.from];
+      const toComp = graphData.components[edge.to];
+      if (!fromComp || !toComp) return;
+
+      const fromDir = getDirectoryPath(fromComp.filePath);
+      const toDir = getDirectoryPath(toComp.filePath);
+
+      if (fromDir !== toDir) {
+        const fromDirData = directories.get(fromDir);
+        const toDirData = directories.get(toDir);
+        if (fromDirData && toDirData) {
+          fromDirData.outgoingDirs.set(toDir, (fromDirData.outgoingDirs.get(toDir) || 0) + 1);
+          toDirData.incomingDirs.set(fromDir, (toDirData.incomingDirs.get(fromDir) || 0) + 1);
+        }
+      }
+    });
+  }
+
+  function getDirectoryPath(filePath) {
+    const parts = filePath.split('/');
+    parts.pop();
+    return parts.slice(-2).join('/') || 'root';
   }
 
   function getNodeWidth(node) {
     return Math.max(100, node.name.length * 8 + 24);
   }
 
-  // Store dagre graph globally for edge routing (declared at top)
-
-  // Find connected components using Union-Find
-  function findConnectedComponents(nodeIds, edges) {
-    const parent = {};
-    const rank = {};
-
-    // Initialize each node as its own parent
-    nodeIds.forEach(id => {
-      parent[id] = id;
-      rank[id] = 0;
-    });
-
-    function find(x) {
-      if (parent[x] !== x) {
-        parent[x] = find(parent[x]); // Path compression
-      }
-      return parent[x];
-    }
-
-    function union(x, y) {
-      const px = find(x);
-      const py = find(y);
-      if (px === py) return;
-      // Union by rank
-      if (rank[px] < rank[py]) {
-        parent[px] = py;
-      } else if (rank[px] > rank[py]) {
-        parent[py] = px;
-      } else {
-        parent[py] = px;
-        rank[px]++;
-      }
-    }
-
-    // Union nodes connected by edges
-    edges.forEach(edge => {
-      if (parent[edge.from] !== undefined && parent[edge.to] !== undefined) {
-        union(edge.from, edge.to);
-      }
-    });
-
-    // Group nodes by their root parent
-    const components = {};
-    nodeIds.forEach(id => {
-      const root = find(id);
-      if (!components[root]) {
-        components[root] = [];
-      }
-      components[root].push(id);
-    });
-
-    return Object.values(components);
-  }
-
-  // Get descendants of a node for collapse functionality
+  // Get descendants for collapse
   function getDescendants(nodeId) {
     const descendants = new Set();
     const queue = [nodeId];
@@ -730,7 +1578,7 @@ function getScript(): string {
     return descendants;
   }
 
-  // Get visible nodes (excluding collapsed descendants)
+  // Get visible nodes
   function getVisibleNodes() {
     const hidden = new Set();
     collapsedNodes.forEach(nodeId => {
@@ -739,1101 +1587,771 @@ function getScript(): string {
     return nodes.filter(n => !hidden.has(n.id));
   }
 
-  // Check if node is hidden due to collapse
-  function isHiddenByCollapse(nodeId) {
-    for (const collapsedId of collapsedNodes) {
-      if (getDescendants(collapsedId).has(nodeId)) {
-        return true;
-      }
+  // ELK layout
+  async function layoutWithElk(elkNodes, elkEdges) {
+    if (typeof ELK === 'undefined') {
+      // Fallback to grid layout
+      return elkNodes.map((n, i) => ({
+        ...n,
+        x: (i % 10) * 150 + 100,
+        y: Math.floor(i / 10) * 80 + 100
+      }));
     }
-    return false;
-  }
 
-  // Toggle collapse state for a node
-  async function toggleCollapse(nodeId) {
-    if (collapsedNodes.has(nodeId)) {
-      collapsedNodes.delete(nodeId);
-    } else {
-      collapsedNodes.add(nodeId);
-    }
-    await render();
-  }
-
-  // ELK layout options
-  const elkOptions = {
-    'elk.algorithm': 'layered',
-    'elk.direction': 'DOWN',
-    'elk.layered.spacing.nodeNodeBetweenLayers': '100',
-    'elk.spacing.nodeNode': '60',
-    'elk.padding': '[left=40, top=40, right=40, bottom=40]',
-    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-    'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
-  };
-
-  // Store ELK edge points for drawing
-  let elkEdgePoints = new Map();
-
-  // Basic layout (uses ELK if available, falls back to Dagre)
-  function layoutNodes() {
-    if (nodes.length === 0) return;
-
-    if (USE_ELK) {
-      layoutNodesElk();
-    } else if (typeof dagre !== 'undefined') {
-      layoutNodesDagre();
-    } else {
-      layoutNodesFallback();
-    }
-  }
-
-  // ELK layout (async)
-  async function layoutNodesElk() {
     const elk = new ELK.default();
+    const elkGraph = {
+      id: 'root',
+      layoutOptions: {
+        'elk.algorithm': 'layered',
+        'elk.direction': 'DOWN',
+        'elk.layered.spacing.nodeNodeBetweenLayers': '100',
+        'elk.spacing.nodeNode': '60',
+        'elk.padding': '[left=40, top=40, right=40, bottom=40]',
+        'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+        'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      },
+      children: elkNodes.map(n => ({
+        id: n.id,
+        width: n.width,
+        height: n.height,
+      })),
+      edges: elkEdges.map((e, i) => ({
+        id: 'e' + i,
+        sources: [e.source],
+        targets: [e.target],
+      })),
+    };
 
-    // Build ELK graph
-    const elkChildren = nodes.map(node => ({
+    try {
+      const result = await elk.layout(elkGraph);
+      const positions = {};
+      if (result.children) {
+        result.children.forEach(child => {
+          positions[child.id] = {
+            x: (child.x || 0) + (child.width || 0) / 2,
+            y: (child.y || 0) + (child.height || 0) / 2
+          };
+        });
+      }
+      return elkNodes.map(n => ({
+        ...n,
+        x: positions[n.id]?.x || n.x,
+        y: positions[n.id]?.y || n.y
+      }));
+    } catch (err) {
+      console.error('ELK layout error:', err);
+      return elkNodes;
+    }
+  }
+
+  // Initialize Cytoscape
+  async function initCytoscape() {
+    const container = document.getElementById('cy');
+
+    if (nodes.length === 0) {
+      container.innerHTML = '<div class="empty-state"><h2>No React components found</h2><p>Make sure your workspace contains .tsx or .jsx files with React components</p></div>';
+      return;
+    }
+
+    // Build elements based on current view
+    const elements = await buildElements();
+
+    // Create or update Cytoscape instance
+    if (cy) {
+      cy.destroy();
+    }
+
+    cy = cytoscape({
+      container: container,
+      elements: elements,
+      style: getCytoscapeStyles(),
+      layout: { name: 'preset' },
+      minZoom: 0.02,
+      maxZoom: 3,
+      wheelSensitivity: 0.3,
+      // Performance options for large graphs
+      hideEdgesOnViewport: nodes.length > 100,
+      textureOnViewport: nodes.length > 200,
+      pixelRatio: 'auto',
+    });
+
+    // Set up interactions
+    setupCytoscapeInteractions();
+
+    // Set up semantic zoom
+    setupSemanticZoom();
+
+    // Fit to view
+    cy.fit(50);
+  }
+
+  function setupSemanticZoom() {
+    if (!cy) return;
+
+    cy.on('zoom', function() {
+      const now = Date.now();
+      if (now - lastZoomUpdate < 100) return;
+      lastZoomUpdate = now;
+
+      const zoom = cy.zoom();
+      let newLevel = 'close';
+      if (zoom < ZOOM_THRESHOLD_FAR) {
+        newLevel = 'far';
+      } else if (zoom < ZOOM_THRESHOLD_CLOSE) {
+        newLevel = 'medium';
+      }
+
+      if (newLevel !== currentZoomLevel) {
+        currentZoomLevel = newLevel;
+        applySemanticZoom();
+      }
+    });
+  }
+
+  function applySemanticZoom() {
+    if (!cy || currentView === 'drilling') return;
+
+    const componentNodes = cy.nodes('[nodeType="component"], [nodeType="stateful"], [nodeType="provider"]');
+    const directoryNodes = cy.nodes('[nodeType="directory"]');
+    const componentEdges = cy.edges('[edgeType="props"], [edgeType="context"], [edgeType="hierarchy"]');
+    const directoryEdges = cy.edges('[edgeType="directory"]');
+
+    // Apply classes based on zoom level with smooth transitions
+    if (currentZoomLevel === 'far') {
+      // Far: Show only directories
+      componentNodes.addClass('zoom-hidden').removeClass('zoom-medium');
+      directoryNodes.removeClass('zoom-hidden');
+      componentEdges.addClass('zoom-hidden');
+      directoryEdges.removeClass('zoom-hidden');
+    } else if (currentZoomLevel === 'medium') {
+      // Medium: Show components with reduced detail
+      componentNodes.removeClass('zoom-hidden').addClass('zoom-medium');
+      directoryNodes.addClass('zoom-hidden');
+      componentEdges.removeClass('zoom-hidden');
+      directoryEdges.addClass('zoom-hidden');
+    } else {
+      // Close: Full detail
+      componentNodes.removeClass('zoom-hidden').removeClass('zoom-medium');
+      directoryNodes.addClass('zoom-hidden');
+      componentEdges.removeClass('zoom-hidden');
+      directoryEdges.addClass('zoom-hidden');
+    }
+
+    // Update zoom indicator
+    updateEdgeVisibility();
+  }
+
+  async function buildElements() {
+    const visibleNodes = getVisibleNodes();
+    const elements = [];
+
+    // Prepare nodes for ELK layout
+    const elkNodes = visibleNodes.map(node => ({
       id: node.id,
       width: getNodeWidth(node),
       height: 40,
-      labels: [{ text: node.name }],
+      name: node.name,
+      hasState: node.hasState,
+      data: node.data
     }));
 
-    const elkEdges = graphData.edges
-      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
-      .filter(e => nodes.some(n => n.id === e.from) && nodes.some(n => n.id === e.to))
-      .map((edge, i) => ({
-        id: 'e' + i,
-        sources: [edge.from],
-        targets: [edge.to],
-      }));
-
-    const elkGraph = {
-      id: 'root',
-      layoutOptions: elkOptions,
-      children: elkChildren,
-      edges: elkEdges,
-    };
-
-    try {
-      const result = await elk.layout(elkGraph);
-
-      // Extract node positions
-      if (result.children) {
-        for (const child of result.children) {
-          const node = nodes.find(n => n.id === child.id);
-          if (node) {
-            node.x = (child.x || 0) + (child.width || 0) / 2;
-            node.y = (child.y || 0) + (child.height || 0) / 2;
-          }
-        }
-      }
-
-      // Extract edge points
-      elkEdgePoints = new Map();
-      if (result.edges) {
-        for (const edge of result.edges) {
-          if (edge.sections) {
-            const points = [];
-            for (const section of edge.sections) {
-              if (section.startPoint) points.push(section.startPoint);
-              if (section.bendPoints) points.push(...section.bendPoints);
-              if (section.endPoint) points.push(section.endPoint);
-            }
-            // Map back to original edge
-            const origEdge = graphData.edges.find(e =>
-              edge.sources.includes(e.from) && edge.targets.includes(e.to)
-            );
-            if (origEdge) {
-              elkEdgePoints.set(origEdge.from + '->' + origEdge.to, points);
-            }
-          }
-        }
-      }
-
-      currentClusters = new Map();
-      fitToView();
-      updateTransform();
-    } catch (error) {
-      console.error('ELK layout error:', error);
-      layoutNodesFallback();
-    }
-  }
-
-  // Dagre layout (synchronous, fallback)
-  function layoutNodesDagre() {
-    dagreGraph = new dagre.graphlib.Graph({ compound: true });
-    dagreGraph.setGraph({
-      rankdir: 'TB',
-      ranksep: 100,
-      nodesep: 60,
-      marginx: 40,
-      marginy: 40,
-      ranker: 'network-simplex'
-    });
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-    nodes.forEach(node => {
-      dagreGraph.setNode(node.id, {
-        label: node.name,
-        width: getNodeWidth(node),
-        height: 40
+    // Prepare directory nodes for semantic zoom
+    // Make them larger so they're visible when zoomed out
+    const dirNodes = [];
+    directories.forEach((dir, dirPath) => {
+      dirNodes.push({
+        id: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
+        width: Math.max(200, dir.name.length * 12 + 100),
+        height: 80,
+        name: dir.name,
+        dirPath: dirPath,
+        data: dir
       });
     });
 
-    graphData.edges
+    // Get edges for layout
+    const layoutEdges = graphData.edges
       .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
-      .forEach(edge => {
-        if (dagreGraph.hasNode(edge.from) && dagreGraph.hasNode(edge.to)) {
-          dagreGraph.setEdge(edge.from, edge.to);
+      .filter(e => visibleNodes.some(n => n.id === e.from) && visibleNodes.some(n => n.id === e.to))
+      .map(e => ({ source: e.from, target: e.to }));
+
+    // Get directory edges
+    const dirEdges = [];
+    const dirEdgeSet = new Set();
+    directories.forEach((dir, dirPath) => {
+      dir.outgoingDirs.forEach((count, targetDir) => {
+        const edgeKey = dirPath + '->' + targetDir;
+        if (!dirEdgeSet.has(edgeKey)) {
+          dirEdgeSet.add(edgeKey);
+          dirEdges.push({
+            source: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
+            target: 'dir_' + targetDir.replace(/[^a-zA-Z0-9]/g, '_'),
+            weight: count
+          });
         }
       });
+    });
 
-    dagre.layout(dagreGraph);
+    // Run ELK layout for components
+    const positionedNodes = await layoutWithElk(elkNodes, layoutEdges);
 
-    nodes.forEach(node => {
-      const dagreNode = dagreGraph.node(node.id);
-      if (dagreNode) {
-        node.x = dagreNode.x;
-        node.y = dagreNode.y;
+    // Run ELK layout for directories
+    const positionedDirNodes = await layoutWithElk(dirNodes, dirEdges);
+
+    // Create Cytoscape node elements for components
+    positionedNodes.forEach(node => {
+      const hasChildren = graphData.edges.some(e => e.from === node.id && e.mechanism === 'props');
+      const isCollapsed = collapsedNodes.has(node.id);
+      const descendantCount = isCollapsed ? getDescendants(node.id).size : 0;
+
+      // Determine node type/color
+      let nodeType = 'component';
+      if (node.hasState) nodeType = 'stateful';
+      if (node.data.contextProviders && node.data.contextProviders.length > 0) {
+        nodeType = 'provider';
       }
-    });
 
-    currentClusters = new Map();
-    fitToView();
-  }
-
-  // Fallback layout when dagre is not available
-  function layoutNodesFallback() {
-    let maxNodeWidth = 0;
-    nodes.forEach(n => {
-      maxNodeWidth = Math.max(maxNodeWidth, getNodeWidth(n));
-    });
-
-    const HORIZONTAL_GAP = maxNodeWidth + 50;
-    const VERTICAL_GAP = 80;
-    const MAX_NODES_PER_ROW = 20;
-
-    nodes.forEach((node, index) => {
-      const row = Math.floor(index / MAX_NODES_PER_ROW);
-      const col = index % MAX_NODES_PER_ROW;
-      node.x = col * HORIZONTAL_GAP + HORIZONTAL_GAP / 2;
-      node.y = row * VERTICAL_GAP + VERTICAL_GAP / 2;
-    });
-
-    dagreGraph = null;
-    currentClusters = new Map();
-    fitToView();
-  }
-
-  // Layout with clustering support (uses ELK compound nodes or Dagre)
-  async function layoutWithClustering(getClusterForNode) {
-    if (nodes.length === 0) return new Map();
-
-    // Identify clusters first
-    const clusters = new Map();
-    nodes.forEach(node => {
-      const clusterId = getClusterForNode(node);
-      if (clusterId) {
-        if (!clusters.has(clusterId)) clusters.set(clusterId, []);
-        clusters.get(clusterId).push(node);
-      }
-    });
-
-    if (USE_ELK) {
-      await layoutWithClusteringElk(clusters);
-    } else if (typeof dagre !== 'undefined') {
-      layoutWithClusteringDagre(getClusterForNode, clusters);
-    } else {
-      layoutNodesFallback();
-    }
-
-    return clusters;
-  }
-
-  // ELK layout with compound nodes (async)
-  async function layoutWithClusteringElk(clusters) {
-    const elk = new ELK.default();
-    const processedNodes = new Set();
-
-    // Build ELK graph with compound nodes for clusters
-    const elkChildren = [];
-
-    // Add cluster compound nodes with their children
-    clusters.forEach((clusterNodes, clusterId) => {
-      const children = clusterNodes.map(node => {
-        processedNodes.add(node.id);
-        return {
+      elements.push({
+        group: 'nodes',
+        data: {
           id: node.id,
-          width: getNodeWidth(node),
-          height: 40,
-          labels: [{ text: node.name }],
-        };
-      });
-
-      elkChildren.push({
-        id: clusterId,
-        labels: [{ text: clusterId.replace(/^(ctx:|dir:)/, '') }],
-        children: children,
-        layoutOptions: {
-          'elk.padding': '[left=20, top=35, right=20, bottom=20]',
+          label: node.name + (isCollapsed && descendantCount > 0 ? ' (+' + descendantCount + ')' : ''),
+          nodeType: nodeType,
+          hasChildren: hasChildren,
+          isCollapsed: isCollapsed,
+          componentData: node.data,
+          width: node.width,
+          height: 40
         },
+        position: { x: node.x, y: node.y }
       });
     });
 
-    // Add unclustered nodes
-    nodes.forEach(node => {
-      if (!processedNodes.has(node.id)) {
-        elkChildren.push({
-          id: node.id,
-          width: getNodeWidth(node),
-          height: 40,
-          labels: [{ text: node.name }],
+    // Create directory nodes for semantic zoom
+    positionedDirNodes.forEach(dirNode => {
+      const dir = dirNode.data;
+      const label = dir.name + ' (' + dir.components.length + ')';
+
+      elements.push({
+        group: 'nodes',
+        data: {
+          id: dirNode.id,
+          label: label,
+          nodeType: 'directory',
+          dirPath: dirNode.dirPath,
+          componentCount: dir.components.length,
+          statefulCount: dir.statefulCount,
+          hasProvider: dir.hasProvider,
+          width: dirNode.width,
+          height: 80
+        },
+        position: { x: dirNode.x, y: dirNode.y },
+        classes: currentZoomLevel !== 'far' ? 'zoom-hidden' : ''
+      });
+    });
+
+    // Create directory edges
+    dirEdges.forEach((edge, i) => {
+      elements.push({
+        group: 'edges',
+        data: {
+          id: 'dir_e_' + i,
+          source: edge.source,
+          target: edge.target,
+          edgeType: 'directory',
+          weight: edge.weight
+        },
+        classes: currentZoomLevel !== 'far' ? 'zoom-hidden' : ''
+      });
+    });
+
+    // Create edge elements based on view
+    if (currentView === 'flow') {
+      graphData.edges.forEach((edge, i) => {
+        if (!visibleNodes.some(n => n.id === edge.from) || !visibleNodes.some(n => n.id === edge.to)) return;
+
+        elements.push({
+          group: 'edges',
+          data: {
+            id: 'e' + i,
+            source: edge.from,
+            target: edge.to,
+            edgeType: edge.mechanism,
+            propName: edge.propName
+          }
         });
-      }
-    });
-
-    // Build edges
-    const elkEdges = graphData.edges
-      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
-      .filter(e => nodes.some(n => n.id === e.from) && nodes.some(n => n.id === e.to))
-      .map((edge, i) => ({
-        id: 'e' + i,
-        sources: [edge.from],
-        targets: [edge.to],
-      }));
-
-    const elkGraph = {
-      id: 'root',
-      layoutOptions: elkOptions,
-      children: elkChildren,
-      edges: elkEdges,
-    };
-
-    try {
-      const result = await elk.layout(elkGraph);
-
-      // Extract positions recursively
-      elkEdgePoints = new Map();
-
-      function processElkChildren(children, offsetX = 0, offsetY = 0) {
-        for (const child of children) {
-          const x = (child.x || 0) + offsetX;
-          const y = (child.y || 0) + offsetY;
-
-          if (child.children && child.children.length > 0) {
-            // This is a cluster - store its bounds
-            const clusterData = currentClusters.get(child.id);
-            if (clusterData) {
-              child._bounds = { x, y, width: child.width, height: child.height };
-            }
-            processElkChildren(child.children, x, y);
-          } else {
-            // Regular node
-            const node = nodes.find(n => n.id === child.id);
-            if (node) {
-              node.x = x + (child.width || 0) / 2;
-              node.y = y + (child.height || 0) / 2;
-            }
-          }
-        }
-      }
-
-      if (result.children) {
-        processElkChildren(result.children);
-
-        // Store cluster bounds for drawing boundaries
-        for (const child of result.children) {
-          if (child.children && child.children.length > 0) {
-            const existing = clusters.get(child.id);
-            if (existing) {
-              existing._elkBounds = {
-                x: child.x || 0,
-                y: child.y || 0,
-                width: child.width || 0,
-                height: child.height || 0,
-              };
-            }
-          }
-        }
-      }
-
-      // Extract edge points
-      function extractEdgePoints(container, offsetX = 0, offsetY = 0) {
-        if (container.edges) {
-          for (const edge of container.edges) {
-            if (edge.sections) {
-              const points = [];
-              for (const section of edge.sections) {
-                if (section.startPoint) {
-                  points.push({ x: section.startPoint.x + offsetX, y: section.startPoint.y + offsetY });
-                }
-                if (section.bendPoints) {
-                  for (const bp of section.bendPoints) {
-                    points.push({ x: bp.x + offsetX, y: bp.y + offsetY });
-                  }
-                }
-                if (section.endPoint) {
-                  points.push({ x: section.endPoint.x + offsetX, y: section.endPoint.y + offsetY });
-                }
-              }
-              const origEdge = graphData.edges.find(e =>
-                edge.sources.includes(e.from) && edge.targets.includes(e.to)
-              );
-              if (origEdge) {
-                elkEdgePoints.set(origEdge.from + '->' + origEdge.to, points);
-              }
-            }
-          }
-        }
-        if (container.children) {
-          for (const child of container.children) {
-            if (child.children) {
-              extractEdgePoints(child, offsetX + (child.x || 0), offsetY + (child.y || 0));
-            }
-          }
-        }
-      }
-      extractEdgePoints(result);
-
-      currentClusters = clusters;
-      fitToView();
-      updateTransform();
-    } catch (error) {
-      console.error('ELK clustering layout error:', error);
-      layoutNodesFallback();
-    }
-  }
-
-  // Dagre layout with clustering (synchronous, fallback)
-  function layoutWithClusteringDagre(getClusterForNode, clusters) {
-    dagreGraph = new dagre.graphlib.Graph({ compound: true });
-    dagreGraph.setGraph({
-      rankdir: 'TB',
-      ranksep: 100,
-      nodesep: 60,
-      marginx: 40,
-      marginy: 40,
-      ranker: 'network-simplex'
-    });
-    dagreGraph.setDefaultEdgeLabel(() => ({}));
-
-    // Add cluster subgraphs to dagre
-    clusters.forEach((clusterNodes, clusterId) => {
-      dagreGraph.setNode(clusterId, {
-        label: clusterId.replace(/^(ctx:|dir:)/, ''),
-        clusterLabelPos: 'top'
       });
-    });
+    } else if (currentView === 'context') {
+      // Show hierarchy edges (subtle) and context edges (prominent)
+      graphData.edges.forEach((edge, i) => {
+        if (!visibleNodes.some(n => n.id === edge.from) || !visibleNodes.some(n => n.id === edge.to)) return;
 
-    // Add nodes with parent clusters
-    nodes.forEach(node => {
-      const clusterId = getClusterForNode(node);
-      dagreGraph.setNode(node.id, {
-        label: node.name,
-        width: getNodeWidth(node),
-        height: 40
-      });
-      if (clusterId) {
-        dagreGraph.setParent(node.id, clusterId);
-      }
-    });
-
-    // Add edges
-    graphData.edges
-      .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
-      .forEach(edge => {
-        if (dagreGraph.hasNode(edge.from) && dagreGraph.hasNode(edge.to)) {
-          dagreGraph.setEdge(edge.from, edge.to);
+        if (edge.mechanism === 'props') {
+          elements.push({
+            group: 'edges',
+            data: {
+              id: 'eh' + i,
+              source: edge.from,
+              target: edge.to,
+              edgeType: 'hierarchy',
+              propName: edge.propName
+            }
+          });
+        } else if (edge.mechanism === 'context') {
+          elements.push({
+            group: 'edges',
+            data: {
+              id: 'ec' + i,
+              source: edge.from,
+              target: edge.to,
+              edgeType: 'context',
+              propName: edge.propName
+            }
+          });
         }
       });
+    } else if (currentView === 'drilling') {
+      // Show drilling paths
+      if (graphData.propDrillingPaths.length === 0) {
+        // No drilling paths - just show nodes
+      } else {
+        // Layout drilling paths
+        const VERTICAL_GAP = 70;
+        const HORIZONTAL_GAP = 250;
+        const START_X = 150;
+        const START_Y = 80;
 
-    dagre.layout(dagreGraph);
+        // Clear and rebuild elements for drilling view
+        elements.length = 0;
 
-    // Extract positions
-    nodes.forEach(node => {
-      const dagreNode = dagreGraph.node(node.id);
-      if (dagreNode) {
-        node.x = dagreNode.x;
-        node.y = dagreNode.y;
-      }
-    });
+        graphData.propDrillingPaths.forEach((drillingPath, pathIndex) => {
+          const chainX = START_X + pathIndex * HORIZONTAL_GAP;
 
-    currentClusters = clusters;
-    fitToView();
-  }
+          drillingPath.path.forEach((componentName, index) => {
+            const originalNode = nodes.find(n => n.name === componentName);
+            if (!originalNode) return;
 
-  // Layout for State Flow view - directory-based clustering
-  async function layoutForStateFlow() {
-    const getDirectoryCluster = (node) => {
-      if (!node.data.filePath) return null;
-      const parts = node.data.filePath.split('/');
-      const idx = parts.findIndex(p =>
-        ['components', 'pages', 'features', 'modules', 'views', 'containers', 'src'].includes(p)
-      );
-      if (idx >= 0 && idx < parts.length - 1) {
-        return 'dir:' + parts.slice(idx, parts.length - 1).join('/');
-      }
-      return parts.length > 1 ? 'dir:' + parts[parts.length - 2] : null;
-    };
+            const nodeId = 'drill_' + pathIndex + '_' + index;
+            let nodeType = 'passthrough';
+            if (index === 0) nodeType = 'origin';
+            else if (index === drillingPath.path.length - 1) nodeType = 'consumer';
 
-    return await layoutWithClustering(getDirectoryCluster);
-  }
-
-  // Layout for Context view - context boundary clustering
-  async function layoutForContextView() {
-    const getContextCluster = (node) => {
-      for (const boundary of graphData.contextBoundaries) {
-        if (boundary.providerComponent === node.id) {
-          return 'ctx:' + boundary.contextName;
-        }
-      }
-      for (const boundary of graphData.contextBoundaries) {
-        if (boundary.childComponents.includes(node.id)) {
-          return 'ctx:' + boundary.contextName;
-        }
-      }
-      return null;
-    };
-
-    return await layoutWithClustering(getContextCluster);
-  }
-
-  // Draw cluster boundary helper
-  function drawClusterBoundary(g, clusterInfo, label, strokeColor) {
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 20);
-    rect.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 25);
-    rect.setAttribute('width', clusterInfo.width + 40);
-    rect.setAttribute('height', clusterInfo.height + 45);
-    rect.setAttribute('rx', 8);
-    rect.setAttribute('fill', 'rgba(255,255,255,0.02)');
-    rect.setAttribute('stroke', strokeColor);
-    rect.setAttribute('stroke-width', '1');
-    rect.setAttribute('stroke-dasharray', '4,4');
-
-    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 10);
-    text.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 8);
-    text.setAttribute('fill', 'var(--vscode-descriptionForeground)');
-    text.setAttribute('font-size', '10');
-    text.setAttribute('font-family', 'inherit');
-    text.textContent = label;
-
-    g.insertBefore(text, g.firstChild);
-    g.insertBefore(rect, g.firstChild);
-  }
-
-  function fitToView() {
-    if (nodes.length === 0) return;
-
-    const width = svg.clientWidth || 800;
-    const height = svg.clientHeight || 600;
-    const padding = 40;
-
-    // Calculate bounding box of all nodes
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-
-    nodes.forEach(node => {
-      const nodeW = getNodeWidth(node);
-      const nodeH = 32;
-      minX = Math.min(minX, node.x - nodeW / 2);
-      maxX = Math.max(maxX, node.x + nodeW / 2);
-      minY = Math.min(minY, node.y - nodeH / 2);
-      maxY = Math.max(maxY, node.y + nodeH / 2);
-    });
-
-    const graphWidth = maxX - minX;
-    const graphHeight = maxY - minY;
-
-    // For small graphs (< 50 nodes), try to fit in view
-    // For large graphs, start at scale 1.0 and let users zoom out
-    if (nodes.length < 50) {
-      const availableWidth = width - padding * 2;
-      const availableHeight = height - padding * 2;
-      const scaleX = availableWidth / graphWidth;
-      const scaleY = availableHeight / graphHeight;
-      let scale = Math.min(scaleX, scaleY, 1.0);
-
-      const graphCenterX = (minX + maxX) / 2;
-      const graphCenterY = (minY + maxY) / 2;
-      const viewCenterX = width / 2;
-      const viewCenterY = height / 2;
-
-      transform.scale = scale;
-      transform.x = viewCenterX - graphCenterX * scale;
-      transform.y = viewCenterY - graphCenterY * scale;
-    } else {
-      // Large graph: start at scale 1.0, positioned at top-left
-      // User can zoom out with scroll wheel to see everything
-      transform.scale = 1.0;
-      transform.x = padding - minX;
-      transform.y = padding - minY;
-    }
-  }
-
-  async function render() {
-    svg.innerHTML = '';
-
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', 'graph-container');
-    svg.appendChild(g);
-
-    if (nodes.length === 0) {
-      renderEmptyState();
-      return;
-    }
-
-    switch (currentView) {
-      case 'flow':
-        await renderFlowView(g);
-        break;
-      case 'context':
-        await renderContextView(g);
-        break;
-      case 'drilling':
-        renderDrillingView(g);
-        break;
-    }
-
-    updateTransform();
-  }
-
-  function renderEmptyState() {
-    const container = document.querySelector('.canvas-container');
-    container.innerHTML = \`
-      <div class="empty-state">
-        <h2>No React components found</h2>
-        <p>Make sure your workspace contains .tsx or .jsx files with React components</p>
-      </div>
-    \`;
-  }
-
-  async function renderFlowView(g) {
-    // Layout with directory clustering
-    const clusters = await layoutForStateFlow();
-
-    // Draw cluster boundaries (directories)
-    clusters.forEach((clusterNodes, clusterId) => {
-      if (!clusterId.startsWith('dir:')) return;
-      const clusterInfo = dagreGraph ? dagreGraph.node(clusterId) : null;
-      if (clusterInfo && clusterInfo.width && clusterInfo.height) {
-        drawClusterBoundary(g, clusterInfo, clusterId.replace('dir:', ''), 'var(--vscode-panel-border)');
-      }
-    });
-
-    // Draw edges (only for visible nodes)
-    try {
-      graphData.edges.forEach(edge => {
-        const source = nodes.find(n => n.id === edge.from);
-        const target = nodes.find(n => n.id === edge.to);
-        if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
-          drawEdge(g, source, target, edge);
-        }
-      });
-    } catch (e) {
-      console.error('Error drawing edges:', e);
-    }
-
-    // Draw visible nodes
-    getVisibleNodes().forEach(node => drawNode(g, node));
-  }
-
-  async function renderContextView(g) {
-    // Layout with context boundary clustering
-    const clusters = await layoutForContextView();
-
-    // Draw context boundaries from dagre cluster positions
-    clusters.forEach((clusterNodes, clusterId) => {
-      if (!clusterId.startsWith('ctx:')) return;
-      const clusterInfo = dagreGraph ? dagreGraph.node(clusterId) : null;
-      if (clusterInfo && clusterInfo.width && clusterInfo.height) {
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 20);
-        rect.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 25);
-        rect.setAttribute('width', clusterInfo.width + 40);
-        rect.setAttribute('height', clusterInfo.height + 45);
-        rect.setAttribute('rx', 8);
-        rect.setAttribute('class', 'context-boundary');
-
-        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', clusterInfo.x - clusterInfo.width / 2 - 10);
-        label.setAttribute('y', clusterInfo.y - clusterInfo.height / 2 - 8);
-        label.setAttribute('fill', 'var(--vscode-charts-purple)');
-        label.setAttribute('font-size', '11');
-        label.setAttribute('font-weight', '500');
-        label.textContent = clusterId.replace('ctx:', '') + '.Provider';
-
-        g.insertBefore(label, g.firstChild);
-        g.insertBefore(rect, g.firstChild);
-      }
-    });
-
-    // Fallback: if no clusters were rendered, use the old boundary drawing method
-    if (clusters.size === 0 && graphData.contextBoundaries.length > 0) {
-      const total = graphData.contextBoundaries.length;
-
-      function normalizeContextName(name) {
-        return name.toLowerCase()
-          .replace(/context$/i, '')
-          .replace(/provider$/i, '')
-          .replace(/consumer$/i, '');
-      }
-
-      graphData.contextBoundaries.forEach((boundary, index) => {
-        const provider = nodes.find(n => n.id === boundary.providerComponent);
-        const consumers = boundary.childComponents
-          .map(id => nodes.find(n => n.id === id))
-          .filter(n => n !== undefined);
-
-        if (provider) {
-          const normalizedBoundaryName = normalizeContextName(boundary.contextName);
-          const contextConsumers = nodes.filter(n => {
-            if (!n.data.contextConsumers || n.data.contextConsumers.length === 0) return false;
-            return n.data.contextConsumers.some(consumerContext => {
-              const normalizedConsumer = normalizeContextName(consumerContext);
-              return consumerContext === boundary.contextName ||
-                     normalizedConsumer === normalizedBoundaryName ||
-                     normalizedConsumer.includes(normalizedBoundaryName) ||
-                     normalizedBoundaryName.includes(normalizedConsumer);
+            elements.push({
+              group: 'nodes',
+              data: {
+                id: nodeId,
+                label: componentName,
+                nodeType: nodeType,
+                componentData: originalNode.data,
+                width: getNodeWidth(originalNode),
+                height: 40,
+                pathIndex: pathIndex,
+                stateName: drillingPath.stateName,
+                hops: drillingPath.hops
+              },
+              position: { x: chainX, y: START_Y + index * VERTICAL_GAP }
             });
+
+            // Add edge to next node in chain
+            if (index < drillingPath.path.length - 1) {
+              elements.push({
+                group: 'edges',
+                data: {
+                  id: 'drill_e_' + pathIndex + '_' + index,
+                  source: nodeId,
+                  target: 'drill_' + pathIndex + '_' + (index + 1),
+                  edgeType: 'drilling'
+                }
+              });
+            }
           });
-          const allConsumers = [...new Set([...consumers, ...contextConsumers])];
-          drawContextBoundary(g, provider, allConsumers, boundary.contextName, index, total);
-        }
-      });
-    }
-
-    // Draw props edges first (subtle, in background) to show component hierarchy
-    graphData.edges
-      .filter(e => e.mechanism === 'props')
-      .forEach(edge => {
-        const source = nodes.find(n => n.id === edge.from);
-        const target = nodes.find(n => n.id === edge.to);
-        if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
-          drawEdgeSubtle(g, source, target);
-        }
-      });
-
-    // Draw context edges (only for visible nodes)
-    graphData.edges
-      .filter(e => e.mechanism === 'context')
-      .forEach(edge => {
-        const source = nodes.find(n => n.id === edge.from);
-        const target = nodes.find(n => n.id === edge.to);
-        if (source && target && !isHiddenByCollapse(source.id) && !isHiddenByCollapse(target.id)) {
-          drawEdge(g, source, target, edge);
-        }
-      });
-
-    // Draw visible nodes with purple border for providers
-    getVisibleNodes().forEach(node => {
-      const isProvider = node.data.contextProviders && node.data.contextProviders.length > 0;
-      drawNode(g, node, isProvider ? 'var(--vscode-charts-purple)' : null);
-    });
-  }
-
-  // Draw subtle edge for showing hierarchy in context view
-  function drawEdgeSubtle(g, source, target) {
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const nodeHeight = 20;
-
-    const dx = target.x - source.x;
-    const dy = target.y - source.y;
-
-    let startX = source.x;
-    let startY = source.y + nodeHeight;
-    let endX = target.x;
-    let endY = target.y - nodeHeight;
-
-    if (dy < 0) {
-      startY = source.y - nodeHeight;
-      endY = target.y + nodeHeight;
-    }
-
-    const sourceWidth = getNodeWidth(source) / 2;
-    const targetWidth = getNodeWidth(target) / 2;
-
-    if (Math.abs(dx) > Math.abs(dy) * 2) {
-      startY = source.y;
-      endY = target.y;
-      startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
-      endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
-    }
-
-    const midY = (startY + endY) / 2;
-    const d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
-
-    path.setAttribute('d', d);
-    path.setAttribute('class', 'edge edge-props-subtle');
-    path.setAttribute('fill', 'none');
-
-    g.insertBefore(path, g.firstChild);
-  }
-
-  function renderDrillingView(g) {
-    if (graphData.propDrillingPaths.length === 0) {
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      text.setAttribute('x', svg.clientWidth / 2);
-      text.setAttribute('y', svg.clientHeight / 2);
-      text.setAttribute('text-anchor', 'middle');
-      text.setAttribute('fill', 'var(--vscode-charts-green)');
-      text.setAttribute('font-size', '16');
-      text.textContent = '\\u2713 No prop drilling detected';
-      g.appendChild(text);
-      return;
-    }
-
-    // Layout drilling paths as vertical chains, side by side
-    const VERTICAL_GAP = 70;
-    const HORIZONTAL_GAP = 250;
-    const START_X = 150;
-    const START_Y = 80;
-
-    // Add arrow marker for drilling
-    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    defs.innerHTML = \`
-      <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="var(--vscode-charts-red)" />
-      </marker>
-    \`;
-    g.appendChild(defs);
-
-    graphData.propDrillingPaths.forEach((drillingPath, pathIndex) => {
-      const chainX = START_X + pathIndex * HORIZONTAL_GAP;
-
-      // Draw path label (state name being drilled)
-      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      label.setAttribute('x', chainX);
-      label.setAttribute('y', START_Y - 40);
-      label.setAttribute('text-anchor', 'middle');
-      label.setAttribute('fill', 'var(--vscode-charts-red)');
-      label.setAttribute('font-size', '13');
-      label.setAttribute('font-weight', '600');
-      label.textContent = drillingPath.stateName + ' (' + drillingPath.hops + ' hops)';
-      g.appendChild(label);
-
-      // Create positioned nodes for this chain
-      const chainNodes = [];
-      drillingPath.path.forEach((componentName, index) => {
-        const originalNode = nodes.find(n => n.name === componentName);
-        if (originalNode) {
-          chainNodes.push({
-            ...originalNode,
-            x: chainX,
-            y: START_Y + index * VERTICAL_GAP,
-            isFirst: index === 0,
-            isLast: index === drillingPath.path.length - 1
-          });
-        }
-      });
-
-      // Draw edges between chain nodes
-      for (let i = 0; i < chainNodes.length - 1; i++) {
-        const source = chainNodes[i];
-        const target = chainNodes[i + 1];
-
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        const startY = source.y + 16;
-        const endY = target.y - 16;
-        const midY = (startY + endY) / 2;
-
-        path.setAttribute('d', \`M\${source.x},\${startY} C\${source.x},\${midY} \${target.x},\${midY} \${target.x},\${endY}\`);
-        path.setAttribute('class', 'edge edge-drilling');
-        path.setAttribute('marker-end', 'url(#arrow-red)');
-        g.appendChild(path);
-      }
-
-      // Draw nodes
-      chainNodes.forEach(node => {
-        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        group.setAttribute('class', 'node');
-        group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
-
-        const width = getNodeWidth(node);
-        const height = 32;
-
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', -width / 2);
-        rect.setAttribute('y', -height / 2);
-        rect.setAttribute('width', width);
-        rect.setAttribute('height', height);
-        rect.setAttribute('rx', 4);
-
-        // First node (origin) is blue, last (consumer) is green, middle (pass-through) is orange
-        let fillColor;
-        if (node.isFirst) {
-          fillColor = 'var(--vscode-charts-blue)'; // Blue - origin/defines state
-        } else if (node.isLast) {
-          fillColor = 'var(--vscode-charts-green)'; // Green - actually uses it
-        } else {
-          fillColor = 'var(--vscode-charts-yellow)'; // Yellow/orange - pass-through
-        }
-        rect.setAttribute('fill', fillColor);
-
-        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('class', 'node-label');
-        text.textContent = node.name;
-
-        group.appendChild(rect);
-        group.appendChild(text);
-
-        group.addEventListener('click', () => showNodeDetails(node));
-
-        g.appendChild(group);
-      });
-    });
-
-    // Update transform to fit drilling view
-    const numPaths = graphData.propDrillingPaths.length;
-    const maxPathLength = Math.max(...graphData.propDrillingPaths.map(p => p.path.length));
-    const totalWidth = numPaths * HORIZONTAL_GAP;
-    const totalHeight = maxPathLength * VERTICAL_GAP + 100;
-
-    const width = svg.clientWidth || 800;
-    const height = svg.clientHeight || 600;
-    const scaleX = (width - 80) / totalWidth;
-    const scaleY = (height - 80) / totalHeight;
-    const scale = Math.min(scaleX, scaleY, 1.0);
-
-    transform.scale = scale;
-    transform.x = (width - totalWidth * scale) / 2;
-    transform.y = 40;
-  }
-
-  function drawNode(g, node, borderColor) {
-    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    group.setAttribute('class', 'node');
-    group.setAttribute('transform', \`translate(\${node.x}, \${node.y})\`);
-
-    const width = getNodeWidth(node);
-    const height = 32;
-
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', -width / 2);
-    rect.setAttribute('y', -height / 2);
-    rect.setAttribute('width', width);
-    rect.setAttribute('height', height);
-    rect.setAttribute('rx', 4);
-    rect.setAttribute('class', \`node-rect \${node.hasState ? 'node-component-state' : 'node-component'}\`);
-
-    // Add border for context providers
-    if (borderColor) {
-      rect.setAttribute('stroke', borderColor);
-      rect.setAttribute('stroke-width', '3');
-    }
-
-    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('class', 'node-label');
-    text.textContent = node.name;
-
-    group.appendChild(rect);
-    group.appendChild(text);
-
-    // Add collapse indicator if node has children (only in flow/context views)
-    if (currentView !== 'drilling') {
-      const hasChildren = graphData.edges.some(e =>
-        e.from === node.id && e.mechanism === 'props'
-      );
-
-      if (hasChildren) {
-        const isCollapsed = collapsedNodes.has(node.id);
-        const indicator = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        indicator.setAttribute('x', width / 2 - 14);
-        indicator.setAttribute('y', 4);
-        indicator.setAttribute('fill', 'var(--vscode-descriptionForeground)');
-        indicator.setAttribute('font-size', '12');
-        indicator.setAttribute('class', 'collapse-indicator');
-        indicator.textContent = isCollapsed ? '\\u25B6' : '\\u25BC';
-
-        indicator.addEventListener('click', (e) => {
-          e.stopPropagation();
-          toggleCollapse(node.id);
         });
-        group.appendChild(indicator);
-
-        // Show hidden count when collapsed
-        if (isCollapsed) {
-          const count = getDescendants(node.id).size;
-          if (count > 0) {
-            const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            badge.setAttribute('x', width / 2 + 6);
-            badge.setAttribute('y', -10);
-            badge.setAttribute('fill', 'var(--vscode-charts-yellow)');
-            badge.setAttribute('font-size', '10');
-            badge.textContent = '+' + count;
-            group.appendChild(badge);
-          }
-        }
       }
     }
 
-    group.addEventListener('click', () => showNodeDetails(node));
-
-    g.appendChild(group);
+    return elements;
   }
 
-  function drawEdge(g, source, target, edge) {
-    // Add arrow markers if not exists
-    if (!g.querySelector('#arrow-green')) {
-      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-      defs.innerHTML = \`
-        <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L8,3 z" fill="var(--vscode-charts-green)" />
-        </marker>
-        <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-          <path d="M0,0 L0,6 L8,3 z" fill="var(--vscode-charts-purple)" />
-        </marker>
-      \`;
-      g.appendChild(defs);
-    }
-
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    const nodeHeight = 20;
-    const sourceWidth = getNodeWidth(source) / 2;
-    const targetWidth = getNodeWidth(target) / 2;
-
-    let d;
-
-    // Try to use ELK's calculated edge path first
-    const elkKey = edge.from + '->' + edge.to;
-    const elkPoints = elkEdgePoints.get(elkKey);
-    if (elkPoints && elkPoints.length > 0) {
-      d = 'M' + elkPoints[0].x + ',' + elkPoints[0].y;
-      if (elkPoints.length === 2) {
-        d += ' L' + elkPoints[1].x + ',' + elkPoints[1].y;
-      } else if (elkPoints.length >= 3) {
-        // Create smooth curve through ELK's calculated points
-        for (let i = 1; i < elkPoints.length - 1; i++) {
-          const p1 = elkPoints[i];
-          const p2 = elkPoints[i + 1];
-          d += ' Q' + p1.x + ',' + p1.y + ' ' +
-            ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
+  function getCytoscapeStyles() {
+    return [
+      // Node base styles (stateless components - gray)
+      {
+        selector: 'node',
+        style: {
+          'shape': 'roundrectangle',
+          'width': 'data(width)',
+          'height': 'data(height)',
+          'label': 'data(label)',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '11px',
+          'font-family': 'var(--vscode-font-family)',
+          'color': '#ffffff',
+          'text-wrap': 'none',
+          'background-color': '#0d9488',
+          'border-width': 0,
+          'text-max-width': '150px',
+          'text-overflow-wrap': 'ellipsis',
         }
-        d += ' L' + elkPoints[elkPoints.length - 1].x + ',' + elkPoints[elkPoints.length - 1].y;
-      }
-    }
-    // Fall back to dagre's calculated edge path
-    else if (dagreGraph) {
-      const dagreEdge = dagreGraph.edge(source.id, target.id);
-      if (dagreEdge && dagreEdge.points && dagreEdge.points.length > 0) {
-        const points = dagreEdge.points;
-        d = 'M' + points[0].x + ',' + points[0].y;
-
-        if (points.length === 2) {
-          d += ' L' + points[1].x + ',' + points[1].y;
-        } else if (points.length >= 3) {
-          for (let i = 1; i < points.length - 1; i++) {
-            const p0 = points[i - 1];
-            const p1 = points[i];
-            const p2 = points[i + 1];
-            d += ' Q' + p1.x + ',' + p1.y + ' ' +
-              ((p1.x + p2.x) / 2) + ',' + ((p1.y + p2.y) / 2);
-          }
-          d += ' L' + points[points.length - 1].x + ',' + points[points.length - 1].y;
+      },
+      // Stateful nodes (blue)
+      {
+        selector: 'node[nodeType="stateful"]',
+        style: {
+          'background-color': '#1f6feb'
+        }
+      },
+      // Provider nodes (purple border)
+      {
+        selector: 'node[nodeType="provider"]',
+        style: {
+          'background-color': '#1f6feb',
+          'border-width': 3,
+          'border-color': '#8957e5'
+        }
+      },
+      // Drilling view - origin (blue)
+      {
+        selector: 'node[nodeType="origin"]',
+        style: {
+          'background-color': '#1f6feb'
+        }
+      },
+      // Drilling view - passthrough (yellow)
+      {
+        selector: 'node[nodeType="passthrough"]',
+        style: {
+          'background-color': '#d29922',
+          'color': '#0d1117'
+        }
+      },
+      // Drilling view - consumer (green)
+      {
+        selector: 'node[nodeType="consumer"]',
+        style: {
+          'background-color': '#238636'
+        }
+      },
+      // Selected node
+      {
+        selector: 'node:selected',
+        style: {
+          'border-width': 3,
+          'border-color': '#58a6ff'
+        }
+      },
+      // Hovered node
+      {
+        selector: 'node.hover',
+        style: {
+          'border-width': 2,
+          'border-color': '#ffffff'
+        }
+      },
+      // Edge base styles - dimmed by default
+      {
+        selector: 'edge',
+        style: {
+          'width': 2,
+          'line-color': '#3fb950',
+          'target-arrow-color': '#3fb950',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'opacity': 0.2,
+          'arrow-scale': 0.8
+        }
+      },
+      // Props edges (green, dimmed)
+      {
+        selector: 'edge[edgeType="props"]',
+        style: {
+          'line-color': '#3fb950',
+          'target-arrow-color': '#3fb950',
+          'opacity': 0.2
+        }
+      },
+      // Context edges (purple, slightly more visible)
+      {
+        selector: 'edge[edgeType="context"]',
+        style: {
+          'line-color': '#8957e5',
+          'target-arrow-color': '#8957e5',
+          'line-style': 'dashed',
+          'opacity': 0.3
+        }
+      },
+      // Hierarchy edges (gray, more visible)
+      {
+        selector: 'edge[edgeType="hierarchy"]',
+        style: {
+          'line-color': '#8b949e',
+          'target-arrow-color': '#8b949e',
+          'opacity': 0.5,
+          'width': 1.5
+        }
+      },
+      // Drilling edges (red, full opacity)
+      {
+        selector: 'edge[edgeType="drilling"]',
+        style: {
+          'line-color': '#f85149',
+          'target-arrow-color': '#f85149',
+          'width': 3,
+          'opacity': 1
+        }
+      },
+      // Highlighted edges (direct connections on hover)
+      {
+        selector: 'edge.highlight-direct',
+        style: {
+          'opacity': 1,
+          'width': 2.5
+        }
+      },
+      // 2-hop connections
+      {
+        selector: 'edge.highlight-2hop',
+        style: {
+          'opacity': 0.5
+        }
+      },
+      // Hidden edges
+      {
+        selector: 'edge.hidden',
+        style: {
+          'display': 'none'
+        }
+      },
+      // Connected nodes highlight
+      {
+        selector: 'node.connected',
+        style: {
+          'border-width': 2,
+          'border-color': '#58a6ff'
+        }
+      },
+      // Directory nodes (for semantic zoom)
+      {
+        selector: 'node[nodeType="directory"]',
+        style: {
+          'shape': 'roundrectangle',
+          'background-color': '#30363d',
+          'border-width': 3,
+          'border-color': '#8b949e',
+          'color': '#ffffff',
+          'font-size': '16px',
+          'font-weight': 'bold',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'padding': '10px'
+        }
+      },
+      // Directory with stateful components
+      {
+        selector: 'node[nodeType="directory"][statefulCount > 0]',
+        style: {
+          'border-color': '#1f6feb',
+          'border-width': 3
+        }
+      },
+      // Directory with providers
+      {
+        selector: 'node[nodeType="directory"][?hasProvider]',
+        style: {
+          'border-color': '#8957e5',
+          'border-width': 3
+        }
+      },
+      // Directory edges
+      {
+        selector: 'edge[edgeType="directory"]',
+        style: {
+          'line-color': '#8b949e',
+          'target-arrow-color': '#8b949e',
+          'width': 'mapData(weight, 1, 10, 2, 6)',
+          'opacity': 0.7,
+          'curve-style': 'bezier'
+        }
+      },
+      // Zoom-hidden elements
+      {
+        selector: '.zoom-hidden',
+        style: {
+          'display': 'none'
+        }
+      },
+      // Medium zoom - reduced detail
+      {
+        selector: '.zoom-medium',
+        style: {
+          'font-size': '9px',
+          'text-opacity': 0.7,
+          'border-width': 1,
+          'height': 28,
+          'padding': '4px'
+        }
+      },
+      {
+        selector: '.zoom-medium[nodeType="stateful"]',
+        style: {
+          'border-width': 2
+        }
+      },
+      // Search highlight
+      {
+        selector: '.search-highlight',
+        style: {
+          'border-width': 4,
+          'border-color': '#f0883e',
+          'background-color': '#f0883e22',
+          'z-index': 9999
+        }
+      },
+      // Path finding highlights
+      {
+        selector: '.path-start',
+        style: {
+          'border-width': 4,
+          'border-color': '#3fb950',
+          'background-color': '#3fb95033',
+          'z-index': 9999
+        }
+      },
+      {
+        selector: '.path-end',
+        style: {
+          'border-width': 4,
+          'border-color': '#f85149',
+          'background-color': '#f8514933',
+          'z-index': 9999
+        }
+      },
+      {
+        selector: '.path-highlight',
+        style: {
+          'border-width': 3,
+          'border-color': '#a371f7',
+          'background-color': '#a371f733',
+          'z-index': 9998
+        }
+      },
+      {
+        selector: 'edge.path-highlight',
+        style: {
+          'line-color': '#a371f7',
+          'target-arrow-color': '#a371f7',
+          'width': 4,
+          'opacity': 1,
+          'z-index': 9998
+        }
+      },
+      // Focus mode styles
+      {
+        selector: '.focused',
+        style: {
+          'opacity': 1
+        }
+      },
+      {
+        selector: '.dimmed',
+        style: {
+          'opacity': 0.15
         }
       }
-    }
-
-    // Fallback if no calculated path available
-    if (!d) {
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
-
-      let startX = source.x;
-      let startY = source.y + nodeHeight;
-      let endX = target.x;
-      let endY = target.y - nodeHeight;
-
-      if (dy < 0) {
-        startY = source.y - nodeHeight;
-        endY = target.y + nodeHeight;
-      }
-
-      if (Math.abs(dx) > Math.abs(dy) * 2) {
-        startY = source.y;
-        endY = target.y;
-        startX = source.x + (dx > 0 ? sourceWidth : -sourceWidth);
-        endX = target.x + (dx > 0 ? -targetWidth : targetWidth);
-      }
-
-      const midY = (startY + endY) / 2;
-      d = \`M\${startX},\${startY} C\${startX},\${midY} \${endX},\${midY} \${endX},\${endY}\`;
-    }
-
-    path.setAttribute('d', d);
-    path.setAttribute('class', \`edge edge-\${edge.mechanism}\`);
-    path.setAttribute('marker-end', edge.mechanism === 'context' ? 'url(#arrow-purple)' : 'url(#arrow-green)');
-
-    g.insertBefore(path, g.firstChild);
+    ];
   }
 
-  function drawContextBoundary(g, provider, consumers, name, index, total) {
-    // Include provider in the boundary nodes
-    const allNodes = [provider, ...consumers].filter(n => n !== undefined);
-    if (allNodes.length === 0) return;
-
-    const basePadding = 50;
-    const offset = (total - 1 - index) * 30; // Outer contexts have more padding
-
-    // Calculate bounding box with node widths considered
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    allNodes.forEach(n => {
-      const nodeWidth = getNodeWidth(n);
-      minX = Math.min(minX, n.x - nodeWidth / 2);
-      maxX = Math.max(maxX, n.x + nodeWidth / 2);
-      minY = Math.min(minY, n.y - 20);
-      maxY = Math.max(maxY, n.y + 20);
+  function setupCytoscapeInteractions() {
+    // Node click - show details or handle path mode
+    cy.on('tap', 'node', function(evt) {
+      const node = evt.target;
+      if (pathMode) {
+        handlePathModeClick(node.data());
+      } else {
+        showNodeDetails(node.data());
+      }
     });
 
-    minX = minX - basePadding - offset;
-    minY = minY - basePadding - offset;
-    maxX = maxX + basePadding + offset;
-    maxY = maxY + basePadding + offset;
+    // Node hover - highlight connections
+    cy.on('mouseover', 'node', function(evt) {
+      const node = evt.target;
+      hoveredNodeId = node.id();
+      highlightConnections(node);
+    });
 
-    const rectX = minX - 30;
-    const rectY = minY - 25;
-    const rectWidth = maxX - minX + 60;
-    const rectHeight = maxY - minY + 50;
+    cy.on('mouseout', 'node', function(evt) {
+      hoveredNodeId = null;
+      clearHighlights();
+    });
 
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', rectX);
-    rect.setAttribute('y', rectY);
-    rect.setAttribute('width', rectWidth);
-    rect.setAttribute('height', rectHeight);
-    rect.setAttribute('class', 'context-boundary');
+    // Double-click to collapse/expand
+    cy.on('dbltap', 'node', async function(evt) {
+      const node = evt.target;
+      const nodeId = node.data('id').replace(/^drill_\\d+_\\d+$/, (m) => {
+        const parts = m.split('_');
+        return nodes[parseInt(parts[2])]?.id || m;
+      });
 
-    // Position label at top-left corner of its own boundary
-    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', rectX + 10);
-    label.setAttribute('y', rectY + 16);
-    label.setAttribute('fill', 'var(--vscode-charts-purple)');
-    label.setAttribute('font-size', '11');
-    label.setAttribute('font-weight', '500');
-    label.textContent = name + '.Provider';
+      const originalId = node.data('componentData')?.id || nodeId;
 
-    // Add background for label readability
-    const labelBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    const labelWidth = name.length * 7 + 60;
-    labelBg.setAttribute('x', rectX + 6);
-    labelBg.setAttribute('y', rectY + 3);
-    labelBg.setAttribute('width', labelWidth);
-    labelBg.setAttribute('height', 18);
-    labelBg.setAttribute('fill', 'var(--vscode-editor-background)');
-    labelBg.setAttribute('rx', '3');
+      if (collapsedNodes.has(originalId)) {
+        collapsedNodes.delete(originalId);
+      } else {
+        collapsedNodes.add(originalId);
+      }
 
-    g.insertBefore(label, g.firstChild);
-    g.insertBefore(labelBg, g.firstChild);
-    g.insertBefore(rect, g.firstChild);
+      await initCytoscape();
+    });
   }
 
-  function showNodeDetails(node) {
-    const comp = node.data;
+  function highlightConnections(node) {
+    const nodeId = node.id();
+
+    // Get direct connections
+    const directEdges = cy.edges().filter(edge =>
+      edge.data('source') === nodeId || edge.data('target') === nodeId
+    );
+
+    // Get directly connected nodes
+    const directNodeIds = new Set();
+    directEdges.forEach(edge => {
+      directNodeIds.add(edge.data('source'));
+      directNodeIds.add(edge.data('target'));
+    });
+    directNodeIds.delete(nodeId);
+
+    // Get 2-hop connections
+    const twoHopEdges = cy.edges().filter(edge => {
+      const source = edge.data('source');
+      const target = edge.data('target');
+      return (directNodeIds.has(source) || directNodeIds.has(target)) &&
+             source !== nodeId && target !== nodeId &&
+             !directEdges.contains(edge);
+    });
+
+    // Apply highlights
+    directEdges.addClass('highlight-direct');
+    twoHopEdges.addClass('highlight-2hop');
+
+    // Highlight connected nodes
+    directNodeIds.forEach(id => {
+      cy.getElementById(id).addClass('connected');
+    });
+  }
+
+  function clearHighlights() {
+    cy.edges().removeClass('highlight-direct highlight-2hop');
+    cy.nodes().removeClass('connected');
+  }
+
+  function showNodeDetails(data) {
+    const comp = data.componentData;
+    if (!comp) return;
+
     const fileName = comp.filePath.split('/').pop();
 
     // Find metrics for this component
-    const metrics = graphData.componentMetrics?.find(m => m.componentId === node.id);
+    const metrics = graphData.componentMetrics?.find(m => m.componentId === comp.id);
 
     let roleHtml = '';
     if (metrics) {
@@ -1853,10 +2371,16 @@ function getScript(): string {
           <a class="file-link" data-path="\${comp.filePath}" data-line="\${comp.line}">
             \${fileName}:\${comp.line}
           </a>
+          <div class="sidebar-actions">
+            <button class="sidebar-btn" onclick="window.focusOnNode('\${comp.id}')" title="Focus on this component and its neighbors">
+              Focus
+            </button>
+            \${focusedNodeId ? '<button class="sidebar-btn secondary" onclick="window.clearFocus()">Clear Focus</button>' : ''}
+          </div>
         </div>
     \`;
 
-    if (comp.stateProvided.length > 0) {
+    if (comp.stateProvided && comp.stateProvided.length > 0) {
       html += \`
         <div class="sidebar-section">
           <h3>State Defined</h3>
@@ -1868,25 +2392,31 @@ function getScript(): string {
       \`;
     }
 
-    if (comp.contextProviders.length > 0) {
+    if (comp.contextProviders && comp.contextProviders.length > 0) {
       html += \`
         <div class="sidebar-section">
           <h3>Provides Context</h3>
-          \${comp.contextProviders.map(c => \`<span class="tag tag-context">\${c.contextName}</span>\`).join('')}
+          \${comp.contextProviders.map(c => {
+            const color = getContextColor(c.contextName);
+            return \`<span class="tag" style="background: \${color.fill}; color: white;">\${c.contextName}</span>\`;
+          }).join('')}
         </div>
       \`;
     }
 
-    if (comp.contextConsumers.length > 0) {
+    if (comp.contextConsumers && comp.contextConsumers.length > 0) {
       html += \`
         <div class="sidebar-section">
           <h3>Consumes Context</h3>
-          \${comp.contextConsumers.map(c => \`<span class="tag tag-context">\${c}</span>\`).join('')}
+          \${comp.contextConsumers.map(c => {
+            const color = getContextColor(c);
+            return \`<span class="tag" style="background: \${color.fill}; color: white;">\${c}</span>\`;
+          }).join('')}
         </div>
       \`;
     }
 
-    if (comp.props.length > 0) {
+    if (comp.props && comp.props.length > 0) {
       html += \`
         <div class="sidebar-section">
           <h3>Props</h3>
@@ -1942,8 +2472,8 @@ function getScript(): string {
       \`;
     }
 
-    const incoming = graphData.edges.filter(e => e.to === node.id);
-    const outgoing = graphData.edges.filter(e => e.from === node.id);
+    const incoming = graphData.edges.filter(e => e.to === comp.id);
+    const outgoing = graphData.edges.filter(e => e.from === comp.id);
 
     if (incoming.length > 0) {
       html += \`
@@ -2045,63 +2575,89 @@ function getScript(): string {
       \${leakBadge}
       \${renameBadge}
     \`;
+
+    // Update compact summary for the toggle button
+    if (statsSummary) {
+      const issues = [];
+      if (summaryData.components.drillingComponents > 0) issues.push(\`\${summaryData.components.drillingComponents} drilling\`);
+      if (summaryData.components.passthroughComponents > 0) issues.push(\`\${summaryData.components.passthroughComponents} passthrough\`);
+      statsSummary.textContent = \`\${summaryData.components.totalComponents} components\` + (issues.length ? \` · \${issues.join(', ')}\` : '');
+    }
   }
 
   function updateLegend() {
     if (currentView === 'drilling' && graphData.propDrillingPaths.length > 0) {
       legendEl.innerHTML = \`
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
+          <div class="legend-color" style="background: #1f6feb"></div>
           <span>Defines State</span>
         </div>
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-yellow)"></div>
+          <div class="legend-color" style="background: #d29922"></div>
           <span>Pass-through</span>
         </div>
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
+          <div class="legend-color" style="background: #238636"></div>
           <span>Uses State</span>
         </div>
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-red)"></div>
+          <div class="legend-color" style="background: #f85149"></div>
           <span>Drilling Path</span>
         </div>
       \`;
     } else if (currentView === 'context') {
+      let contextLegendItems = '';
+      contextColorMap.forEach((colorIndex, contextName) => {
+        const color = CONTEXT_COLORS[colorIndex];
+        contextLegendItems += \`
+          <div class="legend-item">
+            <div class="legend-color" style="background: \${color.fill}; border: 2px solid \${color.fill};"></div>
+            <span>\${contextName}</span>
+          </div>
+        \`;
+      });
+
+      if (contextLegendItems === '') {
+        contextLegendItems = \`
+          <div class="legend-item">
+            <div class="legend-color" style="background: transparent; border: 2px dashed #8957e5;"></div>
+            <span>Context Flow</span>
+          </div>
+        \`;
+      }
+
       legendEl.innerHTML = \`
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
+          <div class="legend-color" style="background: #0d9488"></div>
           <span>Component</span>
         </div>
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
-          <span>Has State</span>
+          <div class="legend-color" style="background: #1f6feb"></div>
+          <span>Stateful</span>
         </div>
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-purple); border: 2px solid var(--vscode-charts-purple);"></div>
-          <span>Context Provider</span>
+          <div class="legend-color" style="background: #8b949e"></div>
+          <span>Hierarchy</span>
         </div>
-        <div class="legend-item">
-          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="var(--vscode-charts-purple)" stroke-width="2" stroke-dasharray="4,2"/></svg>
-          <span>Context Flow</span>
-        </div>
+        \${contextLegendItems}
       \`;
     } else {
+      // State Flow view - no Hierarchy (that's Context view only)
       legendEl.innerHTML = \`
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-green)"></div>
+          <div class="legend-color" style="background: #0d9488"></div>
           <span>Component</span>
         </div>
         <div class="legend-item">
-          <div class="legend-color" style="background: var(--vscode-charts-blue)"></div>
-          <span>Has State</span>
+          <div class="legend-color" style="background: #1f6feb"></div>
+          <span>Stateful</span>
         </div>
         <div class="legend-item">
-          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="var(--vscode-charts-green)" stroke-width="2"/><polygon points="16,3 20,6 16,9" fill="var(--vscode-charts-green)"/></svg>
-          <span>Props</span>
+          <div class="legend-color" style="background: #3fb950"></div>
+          <span>Props Flow</span>
         </div>
         <div class="legend-item">
-          <svg width="20" height="12"><line x1="0" y1="6" x2="20" y2="6" stroke="var(--vscode-charts-purple)" stroke-width="2" stroke-dasharray="4,2"/></svg>
+          <div class="legend-color" style="background: transparent; border: 2px dashed #8957e5;"></div>
           <span>Context</span>
         </div>
       \`;

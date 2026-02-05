@@ -350,40 +350,17 @@
     .stats-dropdown .stats {
       display: flex;
       flex-direction: column;
-      gap: 0;
+      gap: 6px;
     }
 
-    /* Top 3 stats in a bordered group */
-    .stats-dropdown .stats > span:not([class*="badge"]) {
-      display: block;
-      padding: 8px 12px;
-      background: transparent;
-      border-left: 2px solid #30363d;
-      margin-left: 4px;
+    .stats-dropdown .stats span {
+      margin-left: 0;
+      padding: 4px 0;
+      border-bottom: 1px solid #30363d;
     }
 
-    .stats-dropdown .stats > span:not([class*="badge"]):first-child {
-      padding-top: 10px;
-      border-top-left-radius: 2px;
-    }
-
-    .stats-dropdown .stats > span:not([class*="badge"]):nth-child(3) {
-      padding-bottom: 10px;
-      margin-bottom: 10px;
-      border-bottom-left-radius: 2px;
-    }
-
-    /* Badge styles inside dropdown - keep original colors */
-    .stats-dropdown .warning-badge,
-    .stats-dropdown .passthrough-badge,
-    .stats-dropdown .bundle-badge,
-    .stats-dropdown .leak-badge,
-    .stats-dropdown .rename-badge {
-      display: block;
-      margin: 2px 0;
-      padding: 8px 12px;
-      font-size: 11px;
-      border-radius: 4px;
+    .stats-dropdown .stats span:last-child {
+      border-bottom: none;
     }
 
     .fit-btn {
@@ -1181,6 +1158,7 @@ const summaryData = {"components":{"totalComponents":17},"state":{"totalStateNod
   const toggleHierarchyLabel = document.getElementById('toggleHierarchyLabel');
   const toggleContextLabel = document.getElementById('toggleContextLabel');
   const toggleDrillingLabel = document.getElementById('toggleDrillingLabel');
+  const zoomIndicator = document.getElementById('zoomIndicator');
   const statsToggle = document.getElementById('statsToggle');
   const statsContainer = document.querySelector('.stats-container');
   const statsSummary = document.getElementById('statsSummary');
@@ -1324,15 +1302,18 @@ const summaryData = {"components":{"totalComponents":17},"state":{"totalStateNod
       toggleContextLabel.style.display = 'flex';
       toggleDrillingLabel.style.display = 'none';
       floatingPanel.style.display = 'block';
+      zoomIndicator.style.display = 'flex';
     } else if (currentView === 'context') {
       togglePropsLabel.style.display = 'none';
       toggleHierarchyLabel.style.display = 'flex';
       toggleContextLabel.style.display = 'flex';
       toggleDrillingLabel.style.display = 'none';
       floatingPanel.style.display = 'block';
+      zoomIndicator.style.display = 'flex';
     } else if (currentView === 'drilling') {
-      // Hide the panel in drilling view - it's a focused view
+      // Hide the panel and zoom indicator in drilling view - it's a focused view
       floatingPanel.style.display = 'none';
+      zoomIndicator.style.display = 'none';
     }
   }
 
