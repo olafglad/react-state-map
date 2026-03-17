@@ -1843,8 +1843,42 @@ const summaryData = {"components":{"totalComponents":17},"state":{"totalStateNod
   function getDirectoryPath(filePath) {
     const parts = filePath.split('/');
     parts.pop(); // Remove filename
-    // Get last 2 directory levels for readability
-    return parts.slice(-2).join('/') || 'root';
+
+    // Remove component folder (PascalCase directory that likely contains the component)
+    // e.g., "components/CreateCarModal" -> "components"
+    if (parts.length > 1) {
+      const lastDir = parts[parts.length - 1];
+      // Check if last part is PascalCase (component folder)
+      if (lastDir && /^[A-Z][a-zA-Z0-9]*$/.test(lastDir)) {
+        parts.pop();
+      }
+    }
+
+    // Find meaningful directory after common roots
+    const rootIndicators = ['src', 'app', 'lib', 'components', 'pages', 'features', 'modules', 'views'];
+    let startIdx = 0;
+
+    for (let i = 0; i < parts.length; i++) {
+      if (rootIndicators.includes(parts[i].toLowerCase())) {
+        startIdx = i + 1; // Start AFTER the root indicator
+        break;
+      }
+    }
+
+    // Take up to 2 levels of meaningful directory structure
+    const relevantParts = parts.slice(startIdx, startIdx + 2).filter(p => p.length > 0);
+
+    // If nothing meaningful found, use the root indicator itself
+    if (relevantParts.length === 0) {
+      for (let i = parts.length - 1; i >= 0; i--) {
+        if (rootIndicators.includes(parts[i].toLowerCase())) {
+          return parts[i];
+        }
+      }
+      return parts.slice(-1)[0] || 'root';
+    }
+
+    return relevantParts.join('/');
   }
 
   function getNodeWidth(node) {
@@ -1989,6 +2023,18 @@ const summaryData = {"components":{"totalComponents":17},"state":{"totalStateNod
 
     // Fit to view
     cy.fit(50);
+
+    // Apply semantic zoom after fit (to handle initial zoom level)
+    // Detect current zoom level after fit
+    const initialZoom = cy.zoom();
+    if (initialZoom < ZOOM_THRESHOLD_FAR) {
+      currentZoomLevel = 'far';
+    } else if (initialZoom < ZOOM_THRESHOLD_CLOSE) {
+      currentZoomLevel = 'medium';
+    } else {
+      currentZoomLevel = 'close';
+    }
+    applySemanticZoom();
   }
 
   function setupSemanticZoom() {

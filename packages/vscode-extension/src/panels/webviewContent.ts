@@ -1547,8 +1547,43 @@ function getScript(): string {
 
   function getDirectoryPath(filePath) {
     const parts = filePath.split('/');
-    parts.pop();
-    return parts.slice(-2).join('/') || 'root';
+    parts.pop(); // Remove filename
+
+    // Remove component folder (PascalCase directory that likely contains the component)
+    // e.g., "components/CreateCarModal" -> "components"
+    if (parts.length > 1) {
+      const lastDir = parts[parts.length - 1];
+      // Check if last part is PascalCase (component folder)
+      if (lastDir && /^[A-Z][a-zA-Z0-9]*$/.test(lastDir)) {
+        parts.pop();
+      }
+    }
+
+    // Find meaningful directory after common roots
+    const rootIndicators = ['src', 'app', 'lib', 'components', 'pages', 'features', 'modules', 'views'];
+    let startIdx = 0;
+
+    for (let i = 0; i < parts.length; i++) {
+      if (rootIndicators.includes(parts[i].toLowerCase())) {
+        startIdx = i + 1; // Start AFTER the root indicator
+        break;
+      }
+    }
+
+    // Take up to 2 levels of meaningful directory structure
+    const relevantParts = parts.slice(startIdx, startIdx + 2).filter(p => p.length > 0);
+
+    // If nothing meaningful found, use the root indicator itself
+    if (relevantParts.length === 0) {
+      for (let i = parts.length - 1; i >= 0; i--) {
+        if (rootIndicators.includes(parts[i].toLowerCase())) {
+          return parts[i];
+        }
+      }
+      return parts.slice(-1)[0] || 'root';
+    }
+
+    return relevantParts.join('/');
   }
 
   function getNodeWidth(node) {
@@ -1683,6 +1718,17 @@ function getScript(): string {
 
     // Fit to view
     cy.fit(50);
+
+    // Apply semantic zoom after fit (to handle initial zoom level)
+    const initialZoom = cy.zoom();
+    if (initialZoom < ZOOM_THRESHOLD_FAR) {
+      currentZoomLevel = 'far';
+    } else if (initialZoom < ZOOM_THRESHOLD_CLOSE) {
+      currentZoomLevel = 'medium';
+    } else {
+      currentZoomLevel = 'close';
+    }
+    applySemanticZoom();
   }
 
   function setupSemanticZoom() {
@@ -1755,20 +1801,6 @@ function getScript(): string {
       data: node.data
     }));
 
-    // Prepare directory nodes for semantic zoom
-    // Make them larger so they're visible when zoomed out
-    const dirNodes = [];
-    directories.forEach((dir, dirPath) => {
-      dirNodes.push({
-        id: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
-        width: Math.max(600, dir.name.length * 30 + 300),
-        height: 250,
-        name: dir.name,
-        dirPath: dirPath,
-        data: dir
-      });
-    });
-
     // Get edges for layout
     const layoutEdges = graphData.edges
       .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
@@ -1795,8 +1827,37 @@ function getScript(): string {
     // Run ELK layout for components
     const positionedNodes = await layoutWithElk(elkNodes, layoutEdges);
 
-    // Run ELK layout for directories
-    const positionedDirNodes = await layoutWithElk(dirNodes, dirEdges);
+    // Build a map of node positions for directory centroid calculation
+    const nodePositions = new Map();
+    positionedNodes.forEach(node => {
+      nodePositions.set(node.id, { x: node.x, y: node.y });
+    });
+
+    // Calculate directory positions as centroid of their components (not separate layout)
+    const positionedDirNodes = [];
+    directories.forEach((dir, dirPath) => {
+      // Find positions of all components in this directory (dir.components contains objects, use .id)
+      const componentPositions = dir.components
+        .map(comp => nodePositions.get(comp.id))
+        .filter(pos => pos !== undefined);
+
+      if (componentPositions.length > 0) {
+        // Calculate centroid
+        const centroidX = componentPositions.reduce((sum, p) => sum + p.x, 0) / componentPositions.length;
+        const centroidY = componentPositions.reduce((sum, p) => sum + p.y, 0) / componentPositions.length;
+
+        positionedDirNodes.push({
+          id: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
+          x: centroidX,
+          y: centroidY,
+          width: Math.max(600, dir.name.length * 30 + 300),
+          height: 250,
+          name: dir.name,
+          dirPath: dirPath,
+          data: dir
+        });
+      }
+    });
 
     // Create Cytoscape node elements for components
     positionedNodes.forEach(node => {
