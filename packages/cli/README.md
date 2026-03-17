@@ -100,21 +100,19 @@ react-state-map ./src --include "**/*.tsx" --exclude "**/test/**"
 Generates a standalone, interactive HTML file with:
 
 - **Blue nodes** = Components with local state
-- **Green nodes** = Stateless components
+- **Teal nodes** = Stateless components
+- **Purple border** = Context provider
 - **Green arrows** = Props flow
 - **Purple dashed arrows** = Context flow
 - **Directory groups** = Semantic zoom shows directory overview when zoomed out
-- **Purple boundaries** = Context provider scope
 - **Layers panel** = Toggle edge types (Props, Context, Hierarchy, Drilling)
 - **Search bar** = Fuzzy search for components
 - **Path button** = Find shortest path between two components
-- **▼/▶ indicators** = Collapsible nodes
-- **Red highlights** = Prop drilling paths
+- **Double-click** = Collapse/expand subtrees (+N badge)
+- **Drilling chains** = Color-coded prop drilling paths (Blue → Orange → Green)
 - **Role badges** = consumer / passthrough / transformer / mixed
 
 Pan, zoom, search, find paths, toggle layers, collapse/expand nodes, click components for details, and switch between views.
-
-![State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
 
 ### JSON
 

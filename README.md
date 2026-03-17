@@ -26,8 +26,6 @@ React State Map analyzes your codebase and generates interactive diagrams showin
 - **Click-to-Navigate**: Click any component to jump to its source code
 - **Multiple State Libraries**: Supports useState, useReducer, useContext, Redux, Zustand, and custom hooks
 
-![State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
-
 ## Quick Start
 
 ### Option 1: VS Code Extension (Recommended)
@@ -79,15 +77,14 @@ React State Map automatically detects common anti-patterns and displays warning 
 | Element | Meaning |
 |---------|---------|
 | Blue nodes | Components with local state |
-| Green nodes | Stateless components |
+| Teal nodes | Stateless components |
+| Purple border | Context provider |
 | Green arrows | Props flow |
 | Purple dashed arrows | Context flow |
-| Purple boundaries | Context provider scope |
 | Large gray nodes | Directory groups (semantic zoom - far) |
 | Weighted blue arrows | Inter-directory connections (semantic zoom) |
-| ▼/▶ indicators | Expandable/collapsible nodes |
-| +N badge | Number of hidden children |
-| Red highlights | Prop drilling paths |
+| (+N) label | Collapsed subtree with N hidden children |
+| Red drilling chains | Prop drilling paths |
 | Orange highlight | Search result |
 | Purple path | Path-finding result |
 | Layers panel | Edge type toggle controls |

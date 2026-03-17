@@ -6,8 +6,6 @@ React State Map analyzes your codebase and generates interactive diagrams showin
 
 ![React State Map Demo](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/demo.gif)
 
-![React State Map - State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
-
 ## Features
 
 ### State Flow Visualization
@@ -19,15 +17,13 @@ See at a glance which components own state and how it propagates through your co
 - **Purple dashed arrows** = Context flow
 - **Directory clustering** = Components grouped by folder structure
 
-### Context Boundary Detection
-Visualize your React Context providers and see exactly which components are inside or outside each context boundary.
+### Context View
+Visualize your React Context providers and consumers with color-coded relationships.
 
-![Context Boundaries View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/context-boundaries.png)
-
-- **Context clustering**: Consumer components grouped inside provider boundaries
-- **Subtle hierarchy lines**: Gray lines show parent-child relationships
-- Dashed purple boundaries show context scope
-- Easily spot components outside a context boundary
+- **Color-coded contexts**: Each context gets a unique color in edges and legend
+- **Hierarchy lines**: Gray lines show parent-child relationships
+- **Context edges**: Dashed lines show provider-to-consumer flow
+- Switch to the Context tab to focus on context relationships
 
 ### Search & Path-Finding
 Quickly find components and trace data flow paths.
@@ -54,30 +50,30 @@ Control which edge types are visible with the floating Layers panel.
 ### Collapsible Subtrees
 Reduce visual complexity by collapsing component subtrees.
 
-![Collapsed Node](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/collapsed-node.png)
-
-- **Click ▼/▶** on any node with children to collapse/expand
-- **+N badge** shows how many children are hidden
+- **Double-click** any node with children to collapse/expand
+- **+N badge** on the node label shows how many children are hidden
 - Great for focusing on specific parts of large codebases
 
 ### Prop Drilling Detection
 Automatically detect when props are passed through too many component layers.
 
-![Prop Drilling View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/prop-drilling.png)
+![Prop Drilling Detection](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/prop-drilling.png)
 
-- Red highlights indicate prop drilling paths
+- Color-coded drilling chains: Blue (defines state), Orange (pass-through), Green (uses state)
 - Configurable threshold (default: 3 hops)
-- Clean codebase? You'll see the green checkmark!
+- Switch to the Drilling tab to see all drilling paths side by side
 
 ### Component Details Panel
 Click any component to see comprehensive details in the sidebar.
 
-![Component Details](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/component-details.png)
+![Component Details Panel](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/component-details.png)
 
 - **State Defined**: All state hooks in the component
 - **Context Consumers**: Which contexts the component uses
+- **Prop Metrics**: Usage bar showing consumed/passed/ignored ratio
 - **Props**: Incoming props with types
 - **Data Flow**: Where state comes from and goes to
+- **Focus button**: Isolate this component and its neighbors
 - **Click to navigate**: Jump directly to the source file
 
 ### Comprehensive State Detection
