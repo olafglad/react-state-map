@@ -2,7 +2,7 @@
   "name": "react-state-map-vscode",
   "displayName": "React State Map",
   "description": "Visualize React state flow with interactive graph — ELK.js layout, canvas rendering, semantic zoom, fuzzy search, path-finding, edge layer controls, and prop drilling detection. Supports useState, useContext, Redux, Zustand, and custom hooks.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "OlafGlad",
   "license": "MIT",
   "icon": "images/icon.png",
