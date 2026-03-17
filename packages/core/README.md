@@ -1,8 +1,8 @@
 # @react-state-map/core
 
-Core parsing and graph building library for [React State Map](https://github.com/olafglad/react-state-map).
+Core static analysis engine for [React State Map](https://github.com/olafglad/react-state-map).
 
-This package provides the static analysis engine that parses React codebases and builds component graphs with state flow information.
+Parses React codebases and builds component graphs with state flow, context boundaries, prop drilling detection, and anti-pattern analysis — all without executing code.
 
 ## Installation
 
@@ -49,15 +49,36 @@ console.log(`Edges: ${summary.flow.totalEdges}`);
 - **Context Leak Detection**: Finds components that extract from useContext and re-pass as props
 - **Rename Tracking**: Tracks props through destructuring renames across components
 
+## What It Detects
+
+| State Type | Detection |
+|------------|-----------|
+| `useState` | Variable name, initial value |
+| `useReducer` | Reducer name, initial state |
+| `useContext` | Context name, provider/consumer relationships |
+| **Redux** | `useSelector`, `useDispatch` |
+| **Zustand** | `useStore`, `useXxxStore` patterns |
+| **Custom Hooks** | Any `useXxx` hook calls |
+
+## Anti-Pattern Detection
+
+| Detection | Description |
+|-----------|-------------|
+| Prop Drilling | Props passed through 3+ components without being used |
+| Pass-Through Components | Components that only forward props without consuming them |
+| Large Prop Bundles | Object props with 5+ properties being passed through |
+| Context Leaks | useContext values extracted and re-passed as props |
+| Prop Renames | Props renamed 2+ times through destructuring |
+
 ## For Most Users
 
-If you just want to visualize your React state flow, use the CLI instead:
+If you just want to visualize your React state flow, use the CLI:
 
 ```bash
 npx @react-state-map/cli ./src
 ```
 
-Or install the [VS Code extension](https://marketplace.visualstudio.com/items?itemName=OlafGlad.react-state-map-vscode).
+Or install the [VS Code extension](https://marketplace.visualstudio.com/items?itemName=OlafGlad.react-state-map-vscode) for real-time visualization while you code.
 
 ## License
 

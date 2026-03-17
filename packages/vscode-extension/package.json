@@ -1,7 +1,7 @@
 {
   "name": "react-state-map-vscode",
   "displayName": "React State Map",
-  "description": "Visualize React state flow, context boundaries, and prop drilling through static analysis. Supports useState, useContext, Redux, Zustand, and custom hooks.",
+  "description": "Visualize React state flow with interactive graph — ELK.js layout, canvas rendering, semantic zoom, fuzzy search, path-finding, edge layer controls, and prop drilling detection. Supports useState, useContext, Redux, Zustand, and custom hooks.",
   "version": "0.2.0",
   "publisher": "OlafGlad",
   "license": "MIT",
@@ -38,7 +38,13 @@
     "props",
     "component",
     "diagram",
-    "flow"
+    "flow",
+    "graph",
+    "elkjs",
+    "cytoscape",
+    "prop-drilling",
+    "search",
+    "path-finding"
   ],
   "activationEvents": [
     "workspaceContains:**/*.tsx",

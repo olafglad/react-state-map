@@ -1,7 +1,7 @@
 {
   "name": "@react-state-map/core",
   "version": "0.2.0",
-  "description": "Core parsing and graph building for React state visualization",
+  "description": "Static analysis engine for React state flow visualization — parses components, detects prop drilling, context boundaries, and state patterns (useState, Redux, Zustand)",
   "license": "MIT",
   "author": "Olaf Glad",
   "repository": {
@@ -40,6 +40,13 @@
     "state",
     "static-analysis",
     "typescript",
-    "ast"
+    "ast",
+    "graph",
+    "prop-drilling",
+    "context",
+    "state-management",
+    "redux",
+    "zustand",
+    "component-analysis"
   ]
 }
