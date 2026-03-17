@@ -94,6 +94,10 @@ ${getStyles()}
   </style>
 </head>
 <body>
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Computing layout...</div>
+  </div>
   <div class="app">
     <header class="header">
       <div class="header-left">
@@ -891,6 +895,45 @@ function getStyles(): string {
       margin-bottom: 8px;
       color: #c9d1d9;
     }
+
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #0d1117;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
+
+    .loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #30363d;
+      border-top-color: #238636;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .loading-text {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #8b949e;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   `;
 }
 
@@ -910,6 +953,7 @@ function getScript(): string {
   const panelHeader = document.getElementById('panelHeader');
   const panelContent = document.getElementById('panelContent');
   const panelCollapseBtn = document.getElementById('panelCollapseBtn');
+  const loadingOverlay = document.getElementById('loadingOverlay');
   const togglePropsLabel = document.getElementById('togglePropsLabel');
   const toggleHierarchyLabel = document.getElementById('toggleHierarchyLabel');
   const toggleContextLabel = document.getElementById('toggleContextLabel');
@@ -996,6 +1040,14 @@ function getScript(): string {
     return CONTEXT_COLORS[0];
   }
 
+  function showLoading() {
+    if (loadingOverlay) loadingOverlay.classList.remove('hidden');
+  }
+
+  function hideLoading() {
+    if (loadingOverlay) loadingOverlay.classList.add('hidden');
+  }
+
   // Initialize
   requestAnimationFrame(() => {
     init().catch(err => console.error('Init error:', err));
@@ -1009,7 +1061,11 @@ function getScript(): string {
     updateStats();
     updateLegend();
     updateLayerToggles();
-    await initCytoscape();
+    try {
+      await initCytoscape();
+    } finally {
+      hideLoading();
+    }
   }
 
   function setupFloatingPanel() {
@@ -1077,7 +1133,12 @@ function getScript(): string {
         currentView = tab.dataset.view;
         updateLegend();
         updateLayerToggles();
-        await initCytoscape();
+        showLoading();
+        try {
+          await initCytoscape();
+        } finally {
+          hideLoading();
+        }
       });
     });
 

@@ -2,6 +2,44 @@
 
 All notable changes to React State Map will be documented in this file.
 
+## [0.2.0] - 2026-03-17
+
+### Added
+- **ELK.js Layout Engine**: Replaced Dagre with ELK.js for superior hierarchical graph layout
+  - Better edge crossing minimization
+  - Improved handling of large, complex graphs
+- **Cytoscape.js Canvas Rendering**: Replaced SVG DOM rendering with Cytoscape.js
+  - GPU-accelerated canvas rendering for smooth performance
+  - Handles hundreds of components without lag
+- **Semantic Zoom**: Directory overview at far zoom, component detail at close zoom
+  - Three zoom levels: far (directory), medium (reduced detail), close (full detail)
+  - Directory nodes show component count and stateful indicators
+  - Inter-directory edge weights show connection density
+- **Fuzzy Search**: Search components by name, file path, or props
+  - Real-time results with keyboard navigation
+  - Badges for stateful and provider components
+- **Path Finding**: Find shortest path between any two components
+  - BFS-based pathfinding across all edge types
+  - Visual path highlighting with hop count
+- **Focus Mode**: Isolate a component and its direct neighbors
+- **Edge Layer Controls**: Floating Layers panel to toggle edge types
+  - Toggle Props, Context, Hierarchy, and Drilling edges independently
+  - View-specific layer visibility
+- **Color-Coded Context Boundaries**: Each context gets a unique color
+  - Up to 6 distinct colors for simultaneous context visualization
+  - Legend updates dynamically with context names
+- **Context View Enhancements**: Improved context boundary visualization
+  - Hierarchy lines show parent-child relationships within contexts
+  - Context edges use matching colors
+- **State Persistence**: Panel state survives refresh and tab switches
+  - Persists current view, edge visibility, panel collapsed state
+  - Restores zoom level and pan position
+- **Loading Indicator**: Full-screen spinner during layout computation
+
+### Changed
+- Complete rendering engine rewrite from SVG to canvas
+- Layout algorithm upgraded from Dagre to ELK.js
+
 ## [0.1.6] - 2025-01-14
 
 ### Added

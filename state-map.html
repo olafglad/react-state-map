@@ -2108,20 +2108,6 @@ const summaryData = {"components":{"totalComponents":17},"state":{"totalStateNod
       data: node.data
     }));
 
-    // Also prepare directory nodes for semantic zoom
-    // Make them larger so they're visible when zoomed out
-    const dirNodes = [];
-    directories.forEach((dir, dirPath) => {
-      dirNodes.push({
-        id: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
-        width: Math.max(600, dir.name.length * 30 + 300),
-        height: 250,
-        name: dir.name,
-        dirPath: dirPath,
-        data: dir
-      });
-    });
-
     // Get edges for layout
     const layoutEdges = graphData.edges
       .filter(e => e.mechanism === 'props' || e.mechanism === 'context')
@@ -2148,8 +2134,37 @@ const summaryData = {"components":{"totalComponents":17},"state":{"totalStateNod
     // Run ELK layout for component nodes
     const positionedNodes = await layoutWithElk(elkNodes, layoutEdges);
 
-    // Run ELK layout for directory nodes (separate layout)
-    const positionedDirNodes = await layoutWithElk(dirNodes, dirEdges);
+    // Build a map of node positions for directory centroid calculation
+    const nodePositions = new Map();
+    positionedNodes.forEach(node => {
+      nodePositions.set(node.id, { x: node.x, y: node.y });
+    });
+
+    // Calculate directory positions as centroid of their components (not separate layout)
+    const positionedDirNodes = [];
+    directories.forEach((dir, dirPath) => {
+      // Find positions of all components in this directory (dir.components contains objects, use .id)
+      const componentPositions = dir.components
+        .map(comp => nodePositions.get(comp.id))
+        .filter(pos => pos !== undefined);
+
+      if (componentPositions.length > 0) {
+        // Calculate centroid
+        const centroidX = componentPositions.reduce((sum, p) => sum + p.x, 0) / componentPositions.length;
+        const centroidY = componentPositions.reduce((sum, p) => sum + p.y, 0) / componentPositions.length;
+
+        positionedDirNodes.push({
+          id: 'dir_' + dirPath.replace(/[^a-zA-Z0-9]/g, '_'),
+          x: centroidX,
+          y: centroidY,
+          width: Math.max(600, dir.name.length * 30 + 300),
+          height: 250,
+          name: dir.name,
+          dirPath: dirPath,
+          data: dir
+        });
+      }
+    });
 
     // Create Cytoscape node elements for components
     positionedNodes.forEach(node => {

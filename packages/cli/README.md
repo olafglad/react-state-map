@@ -71,9 +71,15 @@ react-state-map ./src --include "**/*.tsx" --exclude "**/test/**"
 
 ### Visualization Features
 
+- **ELK.js Layout Engine**: Hierarchical graph layout with optimized edge crossing minimization
+- **Cytoscape.js Canvas Rendering**: GPU-accelerated rendering for smooth performance with large graphs
+- **Semantic Zoom**: Directory overview at far zoom, full component detail up close
+- **Fuzzy Search**: Find components by name, file path, or props with real-time results
+- **Path Finding**: Find shortest path between any two components
+- **Edge Layer Controls**: Toggle Props, Context, Hierarchy, and Drilling edges independently
+- **Focus Mode**: Isolate a component and its direct neighbors
 - **State Flow**: See which components own state and how it propagates
-- **Directory Clustering**: Components grouped by folder structure
-- **Context Boundaries**: Visualize React Context providers with clustered consumers
+- **Context Boundaries**: Visualize React Context providers with color-coded boundaries
 - **Collapsible Subtrees**: Click to collapse/expand component subtrees
 - **Prop Drilling Detection**: Automatically detect props passed through too many layers
 
@@ -97,13 +103,16 @@ Generates a standalone, interactive HTML file with:
 - **Green nodes** = Stateless components
 - **Green arrows** = Props flow
 - **Purple dashed arrows** = Context flow
-- **Gray dashed boundaries** = Directory clusters
+- **Directory groups** = Semantic zoom shows directory overview when zoomed out
 - **Purple boundaries** = Context provider scope
+- **Layers panel** = Toggle edge types (Props, Context, Hierarchy, Drilling)
+- **Search bar** = Fuzzy search for components
+- **Path button** = Find shortest path between two components
 - **▼/▶ indicators** = Collapsible nodes
 - **Red highlights** = Prop drilling paths
 - **Role badges** = consumer / passthrough / transformer / mixed
 
-Pan, zoom, collapse/expand nodes, click components for details, and switch between views.
+Pan, zoom, search, find paths, toggle layers, collapse/expand nodes, click components for details, and switch between views.
 
 ![State Flow View](https://raw.githubusercontent.com/olafglad/react-state-map/main/packages/vscode-extension/images/state-flow.png)
 

@@ -2,6 +2,11 @@
 
 All notable changes to @react-state-map/core will be documented in this file.
 
+## [0.2.0] - 2026-03-17
+
+### Fixed
+- **File Exclusion Patterns**: Improved ts-morph negation glob handling for more reliable file filtering
+
 ## [0.1.6] - 2025-01-14
 
 ### Added

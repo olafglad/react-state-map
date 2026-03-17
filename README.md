@@ -8,14 +8,20 @@ React State Map analyzes your codebase and generates interactive diagrams showin
 
 ## Features
 
+- **ELK.js Layout Engine**: Hierarchical graph layout with optimized edge crossing minimization
+- **Cytoscape.js Canvas Rendering**: GPU-accelerated rendering for smooth performance with large graphs
+- **Semantic Zoom**: Directory overview at far zoom, full component detail up close
+- **Fuzzy Search**: Find components by name, file path, or props with real-time results
+- **Path Finding**: Find the shortest path between any two components
+- **Edge Layer Controls**: Toggle Props, Context, Hierarchy, and Drilling edges independently
 - **State Flow Visualization**: See which components own state and how it propagates through props
-- **Context Boundaries**: Visualize React Context providers with clustered consumers
+- **Context Boundaries**: Visualize React Context providers with color-coded boundaries
 - **Prop Drilling Detection**: Automatically detect props passed through too many layers
 - **Pass-Through Analysis**: Classify components as consumer, passthrough, transformer, or mixed
 - **Bundle Detection**: Warn about large object props (5+ properties) being passed through
 - **Context Leak Detection**: Find components that extract from useContext and re-pass as props
 - **Rename Tracking**: Track props through destructuring renames across components
-- **Directory Clustering**: Components automatically grouped by directory structure
+- **Focus Mode**: Isolate a component and its direct neighbors
 - **Collapsible Subtrees**: Collapse component subtrees to reduce visual complexity
 - **Click-to-Navigate**: Click any component to jump to its source code
 - **Multiple State Libraries**: Supports useState, useReducer, useContext, Redux, Zustand, and custom hooks
@@ -77,10 +83,14 @@ React State Map automatically detects common anti-patterns and displays warning 
 | Green arrows | Props flow |
 | Purple dashed arrows | Context flow |
 | Purple boundaries | Context provider scope |
-| Gray dashed boundaries | Directory clusters |
+| Large gray nodes | Directory groups (semantic zoom - far) |
+| Weighted blue arrows | Inter-directory connections (semantic zoom) |
 | ▼/▶ indicators | Expandable/collapsible nodes |
 | +N badge | Number of hidden children |
 | Red highlights | Prop drilling paths |
+| Orange highlight | Search result |
+| Purple path | Path-finding result |
+| Layers panel | Edge type toggle controls |
 | Role badges | consumer / passthrough / transformer / mixed |
 
 ## Use Cases

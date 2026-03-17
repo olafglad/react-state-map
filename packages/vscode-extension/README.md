@@ -29,6 +29,28 @@ Visualize your React Context providers and see exactly which components are insi
 - Dashed purple boundaries show context scope
 - Easily spot components outside a context boundary
 
+### Search & Path-Finding
+Quickly find components and trace data flow paths.
+
+- **Fuzzy search**: Find components by name, file path, or props
+- **Real-time results** with keyboard navigation (Arrow keys + Enter)
+- **Path finding**: Click the Path button, then click two components to find the shortest path
+- **Focus mode**: Isolate a component and its direct neighbors
+
+### Semantic Zoom
+Navigate large codebases with zoom-level-aware detail.
+
+- **Zoom out**: See directory-level overview with inter-directory connection weights
+- **Zoom in**: See full component-level detail with all edges
+- **Three levels**: Far (directories), Medium (reduced detail), Close (full detail)
+
+### Edge Layer Controls
+Control which edge types are visible with the floating Layers panel.
+
+- **Toggle independently**: Props, Context, Hierarchy, and Drilling edges
+- **View-aware**: Different toggles available per view (State Flow, Context, Drilling)
+- **Draggable panel**: Position the Layers panel anywhere on the canvas
+
 ### Collapsible Subtrees
 Reduce visual complexity by collapsing component subtrees.
 
@@ -80,12 +102,17 @@ That's it! The visualization updates automatically when you save files.
 ## Interactive Features
 
 - **Pan**: Click and drag the canvas
-- **Zoom**: Scroll wheel
-- **Collapse/Expand**: Click ▼/▶ on nodes to toggle subtrees
-- **Switch views**: Click tabs (State Flow / Context Boundaries / Prop Drilling)
+- **Zoom**: Scroll wheel (with semantic zoom levels)
+- **Search**: Type in the search bar to find components
+- **Path Finding**: Click Path button, then click two nodes
+- **Focus**: Click Focus in the sidebar to isolate a component's neighborhood
+- **Edge Layers**: Toggle edge types in the floating Layers panel
+- **Collapse/Expand**: Double-click nodes to toggle subtrees
+- **Switch views**: Click tabs (State Flow / Context / Drilling)
 - **Inspect**: Click any component node for details
 - **Navigate**: Click file links to jump to source code
 - **Refresh**: Click ↻ or save a file
+- **State Persistence**: Your view, zoom, pan, edge toggles, and panel state persist across refreshes
 
 ## Configuration
 

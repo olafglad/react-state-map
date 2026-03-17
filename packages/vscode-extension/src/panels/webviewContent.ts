@@ -25,6 +25,10 @@ ${getStyles()}
   </style>
 </head>
 <body>
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Computing layout...</div>
+  </div>
   <div class="app">
     <header class="header">
       <div class="header-left">
@@ -109,6 +113,14 @@ const vscode = acquireVsCodeApi();
 const graphData = ${graphJSON};
 const summaryData = ${summaryJSON};
 const warningsData = ${warningsJSON};
+
+function saveState(state) {
+  vscode.setState(state);
+}
+function loadState() {
+  return vscode.getState() || {};
+}
+
 ${getScript()}
   </script>
 </body>
@@ -860,6 +872,45 @@ function getStyles(): string {
       margin-bottom: 8px;
       color: var(--vscode-foreground);
     }
+
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--vscode-editor-background);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
+
+    .loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--vscode-panel-border);
+      border-top-color: var(--vscode-button-background);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    .loading-text {
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   `;
 }
 
@@ -890,6 +941,7 @@ function getScript(): string {
   const panelHeader = document.getElementById('panelHeader');
   const panelContent = document.getElementById('panelContent');
   const panelCollapseBtn = document.getElementById('panelCollapseBtn');
+  const loadingOverlay = document.getElementById('loadingOverlay');
 
   let currentView = 'flow';
   let cy = null;
@@ -966,6 +1018,47 @@ function getScript(): string {
     return CONTEXT_COLORS[0];
   }
 
+  // Restore persisted state
+  const savedState = loadState();
+  if (savedState.currentView) {
+    currentView = savedState.currentView;
+    tabs.forEach(t => {
+      t.classList.toggle('active', t.dataset.view === currentView);
+    });
+  }
+  if (savedState.edgeVisibility) {
+    edgeVisibility = savedState.edgeVisibility;
+    toggleProps.checked = edgeVisibility.props;
+    toggleContext.checked = edgeVisibility.context;
+    toggleHierarchy.checked = edgeVisibility.hierarchy;
+    toggleDrilling.checked = edgeVisibility.drilling;
+  }
+  if (savedState.panelCollapsed) {
+    panelContent.classList.add('collapsed');
+    panelCollapseBtn.textContent = '+';
+  }
+
+  function persistState() {
+    const state = {
+      currentView,
+      edgeVisibility,
+      panelCollapsed: panelContent.classList.contains('collapsed')
+    };
+    if (cy) {
+      state.zoom = cy.zoom();
+      state.pan = cy.pan();
+    }
+    saveState(state);
+  }
+
+  function showLoading() {
+    if (loadingOverlay) loadingOverlay.classList.remove('hidden');
+  }
+
+  function hideLoading() {
+    if (loadingOverlay) loadingOverlay.classList.add('hidden');
+  }
+
   // Initialize
   init();
 
@@ -977,7 +1070,15 @@ function getScript(): string {
     updateStats();
     updateLegend();
     updateLayerToggles();
-    await initCytoscape();
+    try {
+      await initCytoscape();
+      // Restore zoom/pan if saved
+      if (savedState.zoom && savedState.pan && cy) {
+        cy.viewport({ zoom: savedState.zoom, pan: savedState.pan });
+      }
+    } finally {
+      hideLoading();
+    }
   }
 
   function setupFloatingPanel() {
@@ -987,6 +1088,7 @@ function getScript(): string {
     panelCollapseBtn.addEventListener('click', () => {
       panelContent.classList.toggle('collapsed');
       panelCollapseBtn.textContent = panelContent.classList.contains('collapsed') ? '+' : '−';
+      persistState();
     });
 
     panelHeader.addEventListener('mousedown', (e) => {
@@ -1043,7 +1145,13 @@ function getScript(): string {
         currentView = tab.dataset.view;
         updateLegend();
         updateLayerToggles();
-        await initCytoscape();
+        showLoading();
+        try {
+          await initCytoscape();
+        } finally {
+          hideLoading();
+        }
+        persistState();
       });
     });
 
@@ -1090,18 +1198,22 @@ function getScript(): string {
     toggleProps.addEventListener('change', () => {
       edgeVisibility.props = toggleProps.checked;
       updateEdgeVisibility();
+      persistState();
     });
     toggleContext.addEventListener('change', () => {
       edgeVisibility.context = toggleContext.checked;
       updateEdgeVisibility();
+      persistState();
     });
     toggleHierarchy.addEventListener('change', () => {
       edgeVisibility.hierarchy = toggleHierarchy.checked;
       updateEdgeVisibility();
+      persistState();
     });
     toggleDrilling.addEventListener('change', () => {
       edgeVisibility.drilling = toggleDrilling.checked;
       updateEdgeVisibility();
+      persistState();
     });
 
     // Search input listeners
@@ -1733,6 +1845,12 @@ function getScript(): string {
 
   function setupSemanticZoom() {
     if (!cy) return;
+
+    let viewportSaveTimer = null;
+    cy.on('viewport', function() {
+      clearTimeout(viewportSaveTimer);
+      viewportSaveTimer = setTimeout(() => persistState(), 300);
+    });
 
     cy.on('zoom', function() {
       const now = Date.now();
